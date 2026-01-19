@@ -1,5 +1,9 @@
 #!/bin/bash
 
+# Load required modules (needed for Python 3.11.3 shared libraries)
+module load GCCcore/11.3.0
+module load Python/3.11.3
+
 source ./env/bin/activate
 
 # Change the cache directory for huggingface
@@ -13,5 +17,5 @@ export TORCHINDUCTOR_CACHE_DIR=/data/gpfs/projects/punim2662/.cache/torch/induct
 export CUDA_CACHE_PATH=/data/gpfs/projects/punim2662/.cache/nvidia/
 export HF_HOME=/data/gpfs/projects/punim2662/.cache/huggingface
 
-
-uvicorn main:app --host 0.0.0.0 --port 8000
+echo "Sending requests concurrently with 100 requests..."
+python -m send_requests sequential 100

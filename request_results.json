@@ -1,0 +1,1302 @@
+[
+  {
+    "request_id": 49,
+    "success": true,
+    "elapsed_time": 1.9756863117218018,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "71a7a3d2-f362-4597-8a38-b3b853ae9bee",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.013327360153198242,
+      "avg_time_between_tokens": 0.006231753844914474
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 25,
+    "success": true,
+    "elapsed_time": 1.9810807704925537,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "c2b259c3-24b8-4288-82ec-03fa0cd0faef",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.012476682662963867,
+      "avg_time_between_tokens": 0.006234891771331547
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 53,
+    "success": true,
+    "elapsed_time": 1.9832212924957275,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "bca4299f-cf13-4b1a-ac51-bd3549e7157f",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.015993595123291016,
+      "avg_time_between_tokens": 0.006234346412298248
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 90,
+    "success": true,
+    "elapsed_time": 1.9818198680877686,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "97b55239-8992-4630-8bdd-d046ec43c8e2",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.010126113891601562,
+      "avg_time_between_tokens": 0.006235806022103377
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 19,
+    "success": true,
+    "elapsed_time": 1.9856460094451904,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "1901f62d-e780-4e55-9bbd-4dfab6e464a7",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.01814556121826172,
+      "avg_time_between_tokens": 0.006233830151595469
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 26,
+    "success": true,
+    "elapsed_time": 1.9821338653564453,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "979a28a2-4281-4496-a46a-8b66f628e9ef",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.010426521301269531,
+      "avg_time_between_tokens": 0.006235642695990134
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 64,
+    "success": true,
+    "elapsed_time": 1.9801650047302246,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "7b153cc1-4005-4ffc-b294-aa802ad29d10",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.011430740356445312,
+      "avg_time_between_tokens": 0.006235066361314668
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 34,
+    "success": true,
+    "elapsed_time": 1.9799277782440186,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "bf486b9f-99cf-48ea-b0f2-e70fd2b0e0f0",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.01107645034790039,
+      "avg_time_between_tokens": 0.006235245644576906
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 20,
+    "success": true,
+    "elapsed_time": 1.986013650894165,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "d0570eb0-cd78-4afc-826b-cd95bb2b5d80",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.017674922943115234,
+      "avg_time_between_tokens": 0.0062341380307054895
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 89,
+    "success": true,
+    "elapsed_time": 1.9831931591033936,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "0b696ac3-9679-4331-951a-9d242979e713",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.010752201080322266,
+      "avg_time_between_tokens": 0.006235475615253599
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 24,
+    "success": true,
+    "elapsed_time": 1.9842495918273926,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "a13217bd-b3fa-4ae7-af9a-b88a8e5f67a1",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.015295028686523438,
+      "avg_time_between_tokens": 0.0062347199973158945
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 23,
+    "success": true,
+    "elapsed_time": 1.9847633838653564,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "e8c17a2a-f9f6-450a-a4db-2e92427613b2",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.015624523162841797,
+      "avg_time_between_tokens": 0.006234541652709481
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 92,
+    "success": true,
+    "elapsed_time": 1.9833126068115234,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "a3ae753b-afb1-4f11-9f4c-fcb081a09ce2",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.016474485397338867,
+      "avg_time_between_tokens": 0.006220006567286694
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 3,
+    "success": true,
+    "elapsed_time": 1.9843487739562988,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "6aa5f48a-6da6-41e7-887b-9efd07d8e143",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.017449617385864258,
+      "avg_time_between_tokens": 0.006219504386421264
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 27,
+    "success": true,
+    "elapsed_time": 1.9848103523254395,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "74f97e11-5123-4a45-b8bd-559406e55f41",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.018076419830322266,
+      "avg_time_between_tokens": 0.0062190500770028185
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 59,
+    "success": true,
+    "elapsed_time": 1.9851009845733643,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "b1bbe013-5bed-4d10-91dc-d53def97eab4",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.01775979995727539,
+      "avg_time_between_tokens": 0.006219319471224087
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 60,
+    "success": true,
+    "elapsed_time": 1.984609842300415,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "604bf3f1-d62d-480d-bde5-ed563fcb163a",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.01683974266052246,
+      "avg_time_between_tokens": 0.0062198404252059815
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 28,
+    "success": true,
+    "elapsed_time": 1.984760046005249,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "d2fb8891-3a68-438d-ac41-19b00843df28",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.017138957977294922,
+      "avg_time_between_tokens": 0.0062196714671578
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 93,
+    "success": true,
+    "elapsed_time": 1.9842970371246338,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "f228664a-7d52-4596-9036-02433809884b",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.01618218421936035,
+      "avg_time_between_tokens": 0.006220167077432467
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 35,
+    "success": true,
+    "elapsed_time": 1.9902946949005127,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "e2a3bd32-0b83-4c43-96d7-bf2a900138bc",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.029322385787963867,
+      "avg_time_between_tokens": 0.006141667290935366
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 66,
+    "success": true,
+    "elapsed_time": 1.9957046508789062,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "f6dbf488-7596-4174-bc5d-04f7582ede7e",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.0229794979095459,
+      "avg_time_between_tokens": 0.006139136295692594
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 98,
+    "success": true,
+    "elapsed_time": 2.0013492107391357,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "551f4c93-ce01-476c-8ad1-a167319229b6",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.017650842666625977,
+      "avg_time_between_tokens": 0.006161068935020297
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 36,
+    "success": true,
+    "elapsed_time": 2.012296676635742,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "a81d1961-e846-41a5-b726-87886e700c11",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.015309810638427734,
+      "avg_time_between_tokens": 0.006152024923586378
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 4,
+    "success": true,
+    "elapsed_time": 2.012676477432251,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "b07a388b-c809-4e09-8c10-fa457c8eb166",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.015691518783569336,
+      "avg_time_between_tokens": 0.006151774350334616
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 5,
+    "success": true,
+    "elapsed_time": 2.019578695297241,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "8e789eb3-69e5-4c9d-9dbd-a578271f2cc0",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.009718894958496094,
+      "avg_time_between_tokens": 0.006152481191298541
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 37,
+    "success": true,
+    "elapsed_time": 2.0230698585510254,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "40cdbb89-c721-416e-9ada-7e0728f57b71",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.01166391372680664,
+      "avg_time_between_tokens": 0.006137033537322399
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 68,
+    "success": true,
+    "elapsed_time": 2.0283868312835693,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "647091da-4f45-49ef-bc6f-6e3bc25ac7e1",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.01335597038269043,
+      "avg_time_between_tokens": 0.006128606609269684
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 70,
+    "success": true,
+    "elapsed_time": 2.053487539291382,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "da275fad-97cd-4f25-bb1c-77d4b781bed5",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.015414237976074219,
+      "avg_time_between_tokens": 0.006076983844532686
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 40,
+    "success": true,
+    "elapsed_time": 2.0584983825683594,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "a51d8790-1065-49f6-b025-3c85fd0898a3",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.014401912689208984,
+      "avg_time_between_tokens": 0.006059019238341089
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 9,
+    "success": true,
+    "elapsed_time": 2.068465232849121,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "5e7bb24a-11e3-4e68-8bd1-ab274cc8d711",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.014381170272827148,
+      "avg_time_between_tokens": 0.0060503295823639515
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 41,
+    "success": true,
+    "elapsed_time": 2.073625087738037,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "b43fda3a-95d2-4687-82b9-2c9c3263b068",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.01532292366027832,
+      "avg_time_between_tokens": 0.0060443494834151925
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 72,
+    "success": true,
+    "elapsed_time": 2.0783116817474365,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "fa0a145d-b0dc-478d-b2de-924a8f1052db",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.016302108764648438,
+      "avg_time_between_tokens": 0.006036055321786918
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 73,
+    "success": true,
+    "elapsed_time": 2.08821177482605,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "f6f1e942-708c-4142-8f13-d25a0b1f7a01",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.012256622314453125,
+      "avg_time_between_tokens": 0.006023360233680874
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 43,
+    "success": true,
+    "elapsed_time": 2.0984389781951904,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "55ea4532-bfad-4d12-a70e-20091bfe050a",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.013646125793457031,
+      "avg_time_between_tokens": 0.006012905345243566
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 74,
+    "success": true,
+    "elapsed_time": 2.1032278537750244,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "c2534f54-6e2e-4f84-b4ed-b71fab441765",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.01518106460571289,
+      "avg_time_between_tokens": 0.006006769105499866
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 44,
+    "success": true,
+    "elapsed_time": 2.108062744140625,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "02d6853b-71e7-445f-a8fe-62853242f894",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.01059579849243164,
+      "avg_time_between_tokens": 0.005998997594795975
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 75,
+    "success": true,
+    "elapsed_time": 2.1126694679260254,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "f0bb602f-a5ca-477b-ac62-b14c94e54192",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.011438846588134766,
+      "avg_time_between_tokens": 0.005991303687002144
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 45,
+    "success": true,
+    "elapsed_time": 2.1285674571990967,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "d5acf344-9706-47e3-82ec-882ae1970423",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.013597726821899414,
+      "avg_time_between_tokens": 0.005972942651486865
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 14,
+    "success": true,
+    "elapsed_time": 2.1327240467071533,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "09a2c186-a86e-4b7d-b8c4-9d22d0ab7441",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.016093015670776367,
+      "avg_time_between_tokens": 0.005962531706866096
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 77,
+    "success": true,
+    "elapsed_time": 2.13839054107666,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "3f255543-1308-4bb6-8fef-e46f8e928ab9",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.011273622512817383,
+      "avg_time_between_tokens": 0.00595553996516209
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 47,
+    "success": true,
+    "elapsed_time": 2.1383216381073,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "347fd5e0-6161-424a-956b-4cf4590f5656",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.010029792785644531,
+      "avg_time_between_tokens": 0.0059557718389174515
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 18,
+    "success": true,
+    "elapsed_time": 3.1971185207366943,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "20a58082-0b8e-49c0-a045-1479f156af8f",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.01636528968811035,
+      "avg_time_between_tokens": 0.011004444182388426
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 88,
+    "success": true,
+    "elapsed_time": 3.2033064365386963,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "0b01de4a-7246-4f42-a366-db73d047fadf",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.027742385864257812,
+      "avg_time_between_tokens": 0.010968282466798316
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 85,
+    "success": true,
+    "elapsed_time": 3.2051584720611572,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "753248f2-3187-4829-b076-f4ab4418e01e",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.029816389083862305,
+      "avg_time_between_tokens": 0.01096699181504137
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 33,
+    "success": true,
+    "elapsed_time": 3.204892158508301,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "1693dabe-e800-4900-a48d-388e2371a378",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.02825021743774414,
+      "avg_time_between_tokens": 0.010967970833065003
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 22,
+    "success": true,
+    "elapsed_time": 3.206202507019043,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "47391567-69c5-4304-90fe-cca9226e74ff",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.030089378356933594,
+      "avg_time_between_tokens": 0.010966835998174712
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 84,
+    "success": true,
+    "elapsed_time": 3.2072527408599854,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "b010c568-1f3a-44fd-9e7d-c02c096cb3ad",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.030375242233276367,
+      "avg_time_between_tokens": 0.010966637003140187
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 51,
+    "success": true,
+    "elapsed_time": 3.2078804969787598,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "1ec62438-89d3-47c3-af00-314968f1aa4f",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.03382754325866699,
+      "avg_time_between_tokens": 0.01096594427514264
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 65,
+    "success": true,
+    "elapsed_time": 3.201834201812744,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "fcb4145c-24f8-4360-8d2e-7145115a8bd3",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.0238800048828125,
+      "avg_time_between_tokens": 0.01096945015464242
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 95,
+    "success": true,
+    "elapsed_time": 3.202566623687744,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "4d1a7d25-93bd-4d14-a081-804628d260ef",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.024699926376342773,
+      "avg_time_between_tokens": 0.010968964869581809
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 50,
+    "success": true,
+    "elapsed_time": 3.208500623703003,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "6a1908e2-d16f-404d-ba86-1ebbd011b3b8",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.03458094596862793,
+      "avg_time_between_tokens": 0.010965559426255114
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 87,
+    "success": true,
+    "elapsed_time": 3.2060775756835938,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "3d55c760-190b-4679-b373-888f90296b3b",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.02850508689880371,
+      "avg_time_between_tokens": 0.010967796243081881
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 55,
+    "success": true,
+    "elapsed_time": 3.206220865249634,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "4a743359-2cce-4af2-8cff-f0f1313e1a1c",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.028768301010131836,
+      "avg_time_between_tokens": 0.0109676394875594
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 86,
+    "success": true,
+    "elapsed_time": 3.206615924835205,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "5e042f2e-9206-4afe-b863-6c55a3ff08a6",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.0292818546295166,
+      "avg_time_between_tokens": 0.010967314712644562
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 54,
+    "success": true,
+    "elapsed_time": 3.2067573070526123,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "4fabe608-668f-440d-9a0c-8dcd2614c875",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.02953815460205078,
+      "avg_time_between_tokens": 0.010967154202498788
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 31,
+    "success": true,
+    "elapsed_time": 3.204711437225342,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "71effd24-b9e7-4052-bf39-b9da621cc10f",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.025292634963989258,
+      "avg_time_between_tokens": 0.010968642910634438
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 97,
+    "success": true,
+    "elapsed_time": 3.2036256790161133,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "797aa6f0-973f-4d5d-be90-57811d7b87f9",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.025685787200927734,
+      "avg_time_between_tokens": 0.01096846644333967
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 81,
+    "success": true,
+    "elapsed_time": 3.2107737064361572,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "ded6d2ed-6128-4824-85cf-30be999fba27",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.03502011299133301,
+      "avg_time_between_tokens": 0.010965260933703326
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 52,
+    "success": true,
+    "elapsed_time": 3.20940899848938,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "e09c5d8d-75a1-481b-a8fb-fcbe464f68e3",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.030672550201416016,
+      "avg_time_between_tokens": 0.010966469922403651
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 21,
+    "success": true,
+    "elapsed_time": 3.2095606327056885,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "c70656f0-a614-4eae-a4fe-27bf675dd233",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.03099226951599121,
+      "avg_time_between_tokens": 0.010966305657634585
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 83,
+    "success": true,
+    "elapsed_time": 3.209730863571167,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "9fe1f064-df77-4e90-8d1e-b9132e756e2c",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.03139901161193848,
+      "avg_time_between_tokens": 0.0109661244970607
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 96,
+    "success": true,
+    "elapsed_time": 3.2041921615600586,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "248302fd-ea5a-46f9-8b25-667358fa2eed",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.024141788482666016,
+      "avg_time_between_tokens": 0.010969292460464117
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 82,
+    "success": true,
+    "elapsed_time": 3.210296869277954,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "71440bf3-2300-4d99-b408-5de6c053a4d9",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.03416037559509277,
+      "avg_time_between_tokens": 0.01096575842128964
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 63,
+    "success": true,
+    "elapsed_time": 3.2047598361968994,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "3b03870d-9975-4dc5-ad9a-b4e1cf5a4896",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.024991512298583984,
+      "avg_time_between_tokens": 0.010968809991370974
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 1,
+    "success": true,
+    "elapsed_time": 3.2084877490997314,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "ca1d922e-4d12-40db-acae-d85cb7ac93e9",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.02902531623840332,
+      "avg_time_between_tokens": 0.010967478977413628
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 32,
+    "success": true,
+    "elapsed_time": 3.204536199569702,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "f6b9cef3-39a5-427e-a12a-e21fd1aea9f5",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.02442193031311035,
+      "avg_time_between_tokens": 0.010969130073006697
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 56,
+    "success": true,
+    "elapsed_time": 3.207909107208252,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "aad5553a-afdb-41c6-8edd-9931559db22c",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.02799677848815918,
+      "avg_time_between_tokens": 0.010968130404554953
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 0,
+    "success": true,
+    "elapsed_time": 3.2080557346343994,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "d30a69ec-eab1-4174-b4f7-31be60b878b7",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.043022871017456055,
+      "avg_time_between_tokens": 0.010922610290407196
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 2,
+    "success": true,
+    "elapsed_time": 3.205447196960449,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "7df2312a-76e8-4968-b989-1f374a3cfb43",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.04039597511291504,
+      "avg_time_between_tokens": 0.010923789242121179
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 58,
+    "success": true,
+    "elapsed_time": 3.209378957748413,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "4639026a-e0d1-45df-b689-0be23b54abc6",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.043289899826049805,
+      "avg_time_between_tokens": 0.01092241974327508
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 61,
+    "success": true,
+    "elapsed_time": 3.207941770553589,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "ff8bc110-d9b3-4fc6-a8b8-d27b78ad08f7",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.0422518253326416,
+      "avg_time_between_tokens": 0.010923124673798329
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 94,
+    "success": true,
+    "elapsed_time": 3.2078335285186768,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "ec8acedc-1379-460f-bcae-d7e51082ccc8",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.04148387908935547,
+      "avg_time_between_tokens": 0.010923630609287052
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 29,
+    "success": true,
+    "elapsed_time": 3.2085537910461426,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "09ea721c-d547-4124-828e-8d812168f4f1",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.0425114631652832,
+      "avg_time_between_tokens": 0.010922958531717616
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 62,
+    "success": true,
+    "elapsed_time": 3.208007574081421,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "3031ecdc-2e27-4db2-be33-2f24e338efb0",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.04173159599304199,
+      "avg_time_between_tokens": 0.010923462589894692
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 30,
+    "success": true,
+    "elapsed_time": 3.208204507827759,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "90dbf0b4-01b8-4427-b660-479489d19c98",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.041988372802734375,
+      "avg_time_between_tokens": 0.010923294570502333
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 91,
+    "success": true,
+    "elapsed_time": 3.2092554569244385,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "2ceda14e-0caf-47e3-9ba2-88ca03d96073",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.042757511138916016,
+      "avg_time_between_tokens": 0.010922790512325257
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 57,
+    "success": true,
+    "elapsed_time": 3.210350513458252,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "50934871-ec75-406e-b9d2-035428dabc6a",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.04353642463684082,
+      "avg_time_between_tokens": 0.01092210623223012
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 67,
+    "success": true,
+    "elapsed_time": 3.215111017227173,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "5013a5a4-1f96-4278-bbf6-fc5b96e9da5e",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.028795957565307617,
+      "avg_time_between_tokens": 0.010852518044118806
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 99,
+    "success": true,
+    "elapsed_time": 3.2151224613189697,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "56791c0f-cda1-48a0-a084-6807f8a08894",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.022946596145629883,
+      "avg_time_between_tokens": 0.010852828739196296
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 6,
+    "success": true,
+    "elapsed_time": 3.2282426357269287,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "31bb97a1-c25f-417c-ac99-33db27c2f84e",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.029093027114868164,
+      "avg_time_between_tokens": 0.010791135585214209
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 38,
+    "success": true,
+    "elapsed_time": 3.2282700538635254,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "b725cbd5-0c10-4014-b3a5-57bd26560768",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.021887779235839844,
+      "avg_time_between_tokens": 0.010791390899598128
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 7,
+    "success": true,
+    "elapsed_time": 3.2347707748413086,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "6e26d51c-c8dc-4277-b22e-d591fe26f4eb",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.027565479278564453,
+      "avg_time_between_tokens": 0.010749983975267786
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 39,
+    "success": true,
+    "elapsed_time": 3.2348620891571045,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "eae68ded-062e-4f58-9e92-f91588bb057a",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.021839141845703125,
+      "avg_time_between_tokens": 0.010750164197185847
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 69,
+    "success": true,
+    "elapsed_time": 3.235241174697876,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "c133835d-00eb-4b74-831a-eb54558a109d",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.03239583969116211,
+      "avg_time_between_tokens": 0.010749748372656154
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 8,
+    "success": true,
+    "elapsed_time": 3.2409236431121826,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "01fb8b5c-a0a8-4dc5-b5a9-77356387cc1f",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.025529146194458008,
+      "avg_time_between_tokens": 0.010717157303817629
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 71,
+    "success": true,
+    "elapsed_time": 3.2479212284088135,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "d6015aa6-a040-4ecc-ad26-52a192b0776c",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.026863574981689453,
+      "avg_time_between_tokens": 0.01069330887531671
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 42,
+    "success": true,
+    "elapsed_time": 3.2597129344940186,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "e1276dc5-1100-4719-bdab-d67ff542206a",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.023868322372436523,
+      "avg_time_between_tokens": 0.010635089686536413
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 10,
+    "success": true,
+    "elapsed_time": 3.2600960731506348,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "5c855e4f-e961-411c-b40a-da8c5010c547",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.02976250648498535,
+      "avg_time_between_tokens": 0.010634805273821973
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 11,
+    "success": true,
+    "elapsed_time": 3.2652175426483154,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "6e61b193-7514-480f-9dc6-d768007cb6ae",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.025951147079467773,
+      "avg_time_between_tokens": 0.01060713088418555
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 12,
+    "success": true,
+    "elapsed_time": 3.2707395553588867,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "b9141709-a7f1-48a2-a982-1570978fb148",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.023027658462524414,
+      "avg_time_between_tokens": 0.010573190028273215
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 76,
+    "success": true,
+    "elapsed_time": 3.2826263904571533,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "1190a54b-159b-4b93-a477-14699d5bbcef",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.034926652908325195,
+      "avg_time_between_tokens": 0.010504206334512064
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 13,
+    "success": true,
+    "elapsed_time": 3.282721519470215,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "04457ece-60bc-43ea-be85-3a855b6ed839",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.029183387756347656,
+      "avg_time_between_tokens": 0.010504445691746989
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 46,
+    "success": true,
+    "elapsed_time": 3.2881524562835693,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "7acdba4e-d497-45ab-868a-0d2f908f66a5",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.02277088165283203,
+      "avg_time_between_tokens": 0.01048639252429872
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 48,
+    "success": true,
+    "elapsed_time": 3.294264316558838,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "6f1e2155-36cc-4962-af4c-2b48a642cdde",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.02929997444152832,
+      "avg_time_between_tokens": 0.010437559893750769
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 15,
+    "success": true,
+    "elapsed_time": 3.295414686203003,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "ca3c8e3f-7a55-4292-8a2d-435422c4ed18",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.03388714790344238,
+      "avg_time_between_tokens": 0.01043695352208896
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 16,
+    "success": true,
+    "elapsed_time": 3.2951769828796387,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "21d1018c-1a1e-4deb-923e-fe3672d71f17",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.030743122100830078,
+      "avg_time_between_tokens": 0.010437390935702586
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 79,
+    "success": true,
+    "elapsed_time": 3.2950985431671143,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "663e3703-cafd-4173-ab68-b1263acf1018",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.02896881103515625,
+      "avg_time_between_tokens": 0.010437729790454774
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 78,
+    "success": true,
+    "elapsed_time": 3.295789957046509,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "f9ceb6d7-1ac1-4181-ac3d-af0685e1cd17",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.031110048294067383,
+      "avg_time_between_tokens": 0.010437208836472879
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 17,
+    "success": true,
+    "elapsed_time": 3.295431613922119,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "8d6a5f3b-2947-4a35-943a-12630879d090",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.0286867618560791,
+      "avg_time_between_tokens": 0.010437901564470426
+    },
+    "status_code": 200
+  },
+  {
+    "request_id": 80,
+    "success": true,
+    "elapsed_time": 3.298220157623291,
+    "text_length": 0,
+    "last_event": {
+      "request_id": "73988f2b-53f9-4c7b-8f27-7ce10517ba21",
+      "model": "Qwen/Qwen3-1.7B",
+      "TTFT": 0.043494462966918945,
+      "avg_time_between_tokens": 0.010399232699176458
+    },
+    "status_code": 200
+  }
+]

@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 from vllm import AsyncLLMEngine, SamplingParams
 from vllm.engine.arg_utils import AsyncEngineArgs
-
+import time
 
 def format_sse(data: str) -> str:
     return f"data: {data}\n\n"
@@ -26,6 +26,7 @@ class GenerateRequest(BaseModel):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    print("Starting up the model server...")
     model_name = os.environ.get("MODEL_NAME", "Qwen/Qwen3-1.8B")
     tensor_parallel_size = int(os.environ.get("TENSOR_PARALLEL_SIZE", "1"))
     max_model_len = int(os.environ.get("MAX_MODEL_LEN", "8192"))
@@ -37,12 +38,22 @@ async def lifespan(app: FastAPI):
         max_model_len=max_model_len,
         gpu_memory_utilization=gpu_memory_utilization,
     )
-    app.state.engine = AsyncLLMEngine.from_engine_args(engine_args)
+    try:
+        app.state.engine = AsyncLLMEngine.from_engine_args(engine_args)
+    except Exception as e:
+        print(f"Failed to initialize the model engine: {e}")
+        raise e
     app.state.model_name = model_name
 
     yield
-
-
+    
+    print("Shutting down the model server...")
+    try:
+        await app.state.engine.stop()
+        print("Model engine stopped successfully")
+    except Exception as e:
+        print(f"Error stopping the engine: {e}")
+    
 app = FastAPI(lifespan=lifespan)
 
 
@@ -59,24 +70,35 @@ async def generate(req: GenerateRequest, request: Request):
     )
 
     async def stream() -> AsyncGenerator[str, None]:
-        prev_text = ""
+        start_time = time.time()
+        last_token_time = start_time
+        time_between_tokens = []
+        is_first_token = True
+        TTFT = 0.0
         try:
             async for out in results:
                 if await request.is_disconnected():
                     await engine.abort(request_id)
                     return
-
+                
+                current_time = time.time()
+                if is_first_token:
+                    TTFT = current_time - start_time
+                    is_first_token = False
+                else:
+                    time_between_tokens.append(current_time - last_token_time)
+                
+                last_token_time = current_time
                 text = out.outputs[0].text if out.outputs else ""
-                delta = text[len(prev_text) :]
-                prev_text = text
-                payload = {
-                    "request_id": request_id,
-                    "model": app.state.model_name,
-                    "text": delta,
-                }
-                yield format_sse(json.dumps(payload))
-
-            yield format_sse("[DONE]")
+                
+            payload = {
+                "request_id": request_id,
+                "model": app.state.model_name,
+                # "text": text,
+                "TTFT": TTFT,
+                "avg_time_between_tokens": sum(time_between_tokens) / len(time_between_tokens) if time_between_tokens else 0.0
+            }
+            yield format_sse(json.dumps(payload))
 
         except asyncio.CancelledError:
             await engine.abort(request_id)
