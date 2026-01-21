@@ -18,4 +18,4 @@ export CUDA_CACHE_PATH=/data/gpfs/projects/punim2662/.cache/nvidia/
 export HF_HOME=/data/gpfs/projects/punim2662/.cache/huggingface
 
 echo "Sending requests concurrently with 100 requests..."
-python -m send_requests sequential 100
+python -m send_requests concurrent 1000

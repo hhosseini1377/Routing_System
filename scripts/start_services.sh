@@ -161,22 +161,19 @@ start_service() {
     return 0
 }
 
-# Start model A (Small Model)
-MODEL_A_CMD="MODEL_NAME=\"${MODEL_A_NAME}\" \
-TENSOR_PARALLEL_SIZE=2 \
-GPU_MEMORY_UTILIZATION=${MODEL_A_GPU_MEMORY_UTILIZATION} \
-MAX_MODEL_LEN=${MODEL_A_MAX_LEN} \
-UVICORN_PORT=${UVICORN_MODEL_A_PORT} \
-uvicorn model_server:app --host 0.0.0.0 --port ${UVICORN_MODEL_A_PORT}"
+# Router
+ROUTER_CMD="MODEL_A_URL=\"http://127.0.0.1:${UVICORN_MODEL_A_PORT}\" \
+MODEL_B_URL=\"http://127.0.0.1:${UVICORN_MODEL_B_PORT}\" \
+uvicorn router:app --host 0.0.0.0 --port ${ROUTER_PORT}"
 
-if ! start_service "Model A" "$MODEL_A_CMD" "${UVICORN_MODEL_A_PORT}"; then
-    echo "ERROR: Failed to start Model A" >&2
+if ! start_service "Router" "$ROUTER_CMD" "${ROUTER_PORT}"; then
+    echo "ERROR: Failed to start Router" >&2
     exit 1
 fi
-PID_8B="${PIDS[-1]}"
+PID_ROUTER="${PIDS[-1]}"
 
 # Start model B (Large Model)
-MODEL_B_CMD="CUDA_MPS_ACTIVE_THREAD_PERCENTAGE=20 \
+MODEL_B_CMD="CUDA_MPS_ACTIVE_THREAD_PERCENTAGE=${MODEL_B_ACTIVE_THREAD_PERCENTAGE} \
 MODEL_NAME=\"${MODEL_B_NAME}\" \
 TENSOR_PARALLEL_SIZE=2 \
 GPU_MEMORY_UTILIZATION=${MODEL_B_GPU_MEMORY_UTILIZATION} \
@@ -190,16 +187,20 @@ if ! start_service "Model B" "$MODEL_B_CMD" "${UVICORN_MODEL_B_PORT}"; then
 fi
 PID_1B="${PIDS[-1]}"
 
-# Router
-ROUTER_CMD="MODEL_A_URL=\"http://127.0.0.1:${UVICORN_MODEL_A_PORT}\" \
-MODEL_B_URL=\"http://127.0.0.1:${UVICORN_MODEL_B_PORT}\" \
-uvicorn router:app --host 0.0.0.0 --port ${ROUTER_PORT}"
+# Start model A (Small Model)
+MODEL_A_CMD="CUDA_MPS_ACTIVE_THREAD_PERCENTAGE=${MODEL_A_ACTIVE_THREAD_PERCENTAGE} \
+MODEL_NAME=\"${MODEL_A_NAME}\" \
+TENSOR_PARALLEL_SIZE=2 \
+GPU_MEMORY_UTILIZATION=${MODEL_A_GPU_MEMORY_UTILIZATION} \
+MAX_MODEL_LEN=${MODEL_A_MAX_LEN} \
+UVICORN_PORT=${UVICORN_MODEL_A_PORT} \
+uvicorn model_server:app --host 0.0.0.0 --port ${UVICORN_MODEL_A_PORT}"
 
-if ! start_service "Router" "$ROUTER_CMD" "${ROUTER_PORT}"; then
-    echo "ERROR: Failed to start Router" >&2
+if ! start_service "Model A" "$MODEL_A_CMD" "${UVICORN_MODEL_A_PORT}"; then
+    echo "ERROR: Failed to start Model A" >&2
     exit 1
 fi
-PID_ROUTER="${PIDS[-1]}"
+PID_8B="${PIDS[-1]}"
 
 echo "All services started:"
 echo "  Router on :${ROUTER_PORT} (PID: $PID_ROUTER)"

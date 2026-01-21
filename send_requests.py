@@ -4,6 +4,7 @@ Script to send 100 requests to the router endpoint.
 """
 
 import asyncio
+from cgitb import reset
 import json
 import time
 from typing import Dict, List
@@ -11,7 +12,7 @@ import httpx
 
 
 ROUTER_URL = "http://127.0.0.1:8000/generate"
-NUM_REQUESTS = 100
+NUM_REQUESTS = 1000
 
 
 async def send_single_request(
@@ -21,7 +22,7 @@ async def send_single_request(
     temperature: float = 0.7,
     max_tokens: int = 256,
 ) -> Dict:
-    """Send a single request and process the SSE response."""
+    """Send a single request and process the JSON response."""
     payload = {
         "prompt": prompt,
         "temperature": temperature,
@@ -30,33 +31,23 @@ async def send_single_request(
     
     start_time = time.time()
     try:
-        async with client.stream("POST", ROUTER_URL, json=payload, timeout=60.0) as response:
-            response.raise_for_status()
-            
-            full_text = ""
-            last_event = None
-            
-            async for line in response.aiter_lines():
-                if line.startswith("data: "):
-                    data_str = line[6:]  # Remove "data: " prefix
-                    try:
-                        event_data = json.loads(data_str)
-                        last_event = event_data
-                        if "text" in event_data:
-                            full_text += event_data["text"]
-                    except json.JSONDecodeError:
-                        pass
-            
-            elapsed_time = time.time() - start_time
-            
-            return {
-                "request_id": request_id,
-                "success": True,
-                "elapsed_time": elapsed_time,
-                "text_length": len(full_text),
-                "last_event": last_event,
-                "status_code": response.status_code,
-            }
+        response = await client.post(ROUTER_URL, json=payload, timeout=60.0)
+        response.raise_for_status()
+        response_data = response.json()
+        backend = response_data.get("backend", "")
+        response_text = response_data.get("response", "")
+        
+        elapsed_time = time.time() - start_time
+        
+        return {
+            "request_id": request_id,
+            "success": True,
+            "elapsed_time": elapsed_time,
+            "backend": backend,
+            "response_length": len(response_text),
+            "response_text": response_text,
+            "status_code": response.status_code,
+        }
     except Exception as e:
         elapsed_time = time.time() - start_time
         return {
@@ -122,32 +113,24 @@ def send_requests_sequential(
             
             request_start = time.time()
             try:
-                with client.stream("POST", ROUTER_URL, json=payload, timeout=60.0) as response:
-                    response.raise_for_status()
-                    
-                    full_text = ""
-                    last_event = None
-                    
-                    for line in response.iter_lines():
-                        if line.startswith("data: "):
-                            data_str = line[6:]
-                            try:
-                                event_data = json.loads(data_str)
-                                last_event = event_data
-                                if "text" in event_data:
-                                    full_text += event_data["text"]
-                            except json.JSONDecodeError:
-                                pass
-                    
-                    elapsed = time.time() - request_start
-                    results.append({
-                        "request_id": i,
-                        "success": True,
-                        "elapsed_time": elapsed,
-                        "text_length": len(full_text),
-                        "last_event": last_event,
-                        "status_code": response.status_code,
-                    })
+                response = client.post(ROUTER_URL, json=payload, timeout=60.0)
+                response.raise_for_status()
+                
+                response_data = response.json()
+                print(response_data)
+                backend = response_data.get("backend", "")
+                response_text = response_data.get("response", "")
+                
+                elapsed = time.time() - request_start
+                results.append({
+                    "request_id": i,
+                    "success": True,
+                    "elapsed_time": elapsed,
+                    "backend": backend,
+                    "response_length": len(response_text),
+                    "response_text": response_text,
+                    "status_code": response.status_code,
+                })
             except Exception as e:
                 elapsed = time.time() - request_start
                 results.append({
@@ -178,6 +161,15 @@ def print_statistics(results: List[Dict]):
     print(f"Successful: {len(successful)} ({100*len(successful)/len(results):.1f}%)")
     print(f"Failed: {len(failed)} ({100*len(failed)/len(results):.1f}%)")
     
+    unique_backends = list(set([r["backend"] for r in successful]))
+    for backend in unique_backends:
+        times = [r["elapsed_time"] for r in successful if r["backend"] == backend]
+        print(f"\nResponse Times for {backend}:")
+        print(f"  Min: {min(times):.2f}")
+        print(f"  Max: {max(times):.2f}")
+        print(f"  Avg: {sum(times)/len(times):.2f}")
+        print(f"  Median: {sorted(times)[len(times)//2]:.2f}")
+
     if successful:
         times = [r["elapsed_time"] for r in successful]
         print(f"\nResponse Times (seconds):")
@@ -229,11 +221,11 @@ async def main():
     
     print_statistics(results)
     
-    # Save results to file
+    # rewrite results to file and append to the file
     output_file = "request_results.json"
     with open(output_file, "w") as f:
         json.dump(results, f, indent=2)
-    print(f"\nResults saved to {output_file}")
+    print(f"\nResults appended to {output_file}")
 
 
 if __name__ == "__main__":

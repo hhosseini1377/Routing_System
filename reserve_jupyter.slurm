@@ -1,7 +1,6 @@
 #!/bin/bash
 #SBATCH --nodes 1
-#SBATCH --partition=deeplearn
-#SBATCH --qos=gpgpudeeplearn
+#SBATCH --partition=gpu-a100
 #SBATCH --gres=gpu:2
 #SBATCH --time=7-00:00:00 
 #SBATCH --cpus-per-task=16
