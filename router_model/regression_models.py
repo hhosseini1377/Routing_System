@@ -59,13 +59,13 @@ class TruncatedModel(nn.Module):
         super().__init__()
         # Load model with bfloat16 precision to save memory (H100 supports BF16 natively)
         if model_name == "deberta":
-            self.transformer = AutoModel.from_pretrained("microsoft/deberta-v3-large", torch_dtype=torch.bfloat16)
+            self.transformer = AutoModel.from_pretrained("microsoft/deberta-v3-large", dtype=torch.bfloat16)
         elif model_name == "distilbert":
-            self.transformer = DistilBertModel.from_pretrained("distilbert-base-uncased", torch_dtype=torch.bfloat16)
+            self.transformer = DistilBertModel.from_pretrained("distilbert-base-uncased", dtype=torch.bfloat16)
         elif model_name == "tinybert":
-            self.transformer = AutoModel.from_pretrained("huawei-noah/TinyBERT_General_6L_768D", torch_dtype=torch.bfloat16)
+            self.transformer = AutoModel.from_pretrained("huawei-noah/TinyBERT_General_6L_768D", dtype=torch.bfloat16)
         elif model_name == "bert":
-            self.transformer = AutoModel.from_pretrained("microsoft/deberta-v3-base", torch_dtype=torch.bfloat16)
+            self.transformer = AutoModel.from_pretrained("microsoft/deberta-v3-base", dtype=torch.bfloat16)
         else:
             raise ValueError(f"Invalid model name: {model_name}")
 

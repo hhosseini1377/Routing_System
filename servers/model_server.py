@@ -22,7 +22,7 @@ class GenerateRequest(BaseModel):
     temperature: float = 0.7
     max_tokens: int = 256
     request_id: Optional[str] = None
-
+    start_time: Optional[float] = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -61,51 +61,46 @@ app = FastAPI(lifespan=lifespan)
 async def generate(req: GenerateRequest, request: Request):
     request_id = req.request_id or str(uuid.uuid4())
     sampling = SamplingParams(temperature=req.temperature, max_tokens=req.max_tokens)
-
+    start_time = req.start_time 
     engine: AsyncLLMEngine = app.state.engine
+
     results = engine.generate(
         req.prompt,
         sampling_params=sampling,
         request_id=request_id,
     )
 
-    async def stream() -> AsyncGenerator[str, None]:
-        start_time = time.time()
-        last_token_time = start_time
-        time_between_tokens = []
-        is_first_token = True
-        TTFT = 0.0
-        try:
-            async for out in results:
-                if await request.is_disconnected():
-                    await engine.abort(request_id)
-                    return
-                
-                current_time = time.time()
-                if is_first_token:
-                    TTFT = current_time - start_time
-                    is_first_token = False
-                else:
-                    time_between_tokens.append(current_time - last_token_time)
-                
-                last_token_time = current_time
-                text = out.outputs[0].text if out.outputs else ""
-                
-            payload = {
-                "request_id": request_id,
-                "model": app.state.model_name,
-                # "text": text,
-                "TTFT": TTFT,
-                "avg_time_between_tokens": sum(time_between_tokens) / len(time_between_tokens) if time_between_tokens else 0.0
-            }
-            yield format_sse(json.dumps(payload))
+    last_token_time = start_time
+    time_between_tokens = []
+    is_first_token = True
+    try:
+        async for out in results:
+            if await request.is_disconnected():
+                await engine.abort(request_id)
+                return
+            
+            current_time = time.time()
+            if is_first_token:
+                TTFT = current_time - req.start_time
+                is_first_token = False
+            else:
+                time_between_tokens.append(current_time - last_token_time)
+            
+            last_token_time = current_time
+            text = out.outputs[0].text if out.outputs else ""
+            
+        payload = {
+            "request_id": request_id,
+            "model": app.state.model_name,
+            "response_text": text,
+            "TTFT": TTFT,
+            "avg_time_between_tokens": sum(time_between_tokens) / len(time_between_tokens) if time_between_tokens else 0.0
+        }
+    except asyncio.CancelledError:
+        await engine.abort(request_id)
+        raise
 
-        except asyncio.CancelledError:
-            await engine.abort(request_id)
-            raise
-
-    return StreamingResponse(stream(), media_type="text/event-stream")
-
+    return JSONResponse(content=payload)
 
 @app.post("/abort")
 async def abort(req: dict):

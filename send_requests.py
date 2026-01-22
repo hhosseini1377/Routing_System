@@ -4,7 +4,6 @@ Script to send 100 requests to the router endpoint.
 """
 
 import asyncio
-from cgitb import reset
 import json
 import time
 from typing import Dict, List
@@ -13,7 +12,7 @@ import httpx
 
 ROUTER_URL = "http://127.0.0.1:8000/generate"
 NUM_REQUESTS = 1000
-
+PROMPTS_PATH = "datasets/lmsys_chat1m_prompts_100k_cleaned.pkl"
 
 async def send_single_request(
     client: httpx.AsyncClient,
@@ -21,22 +20,27 @@ async def send_single_request(
     prompt: str = "What is machine learning?",
     temperature: float = 0.7,
     max_tokens: int = 256,
+    start_time: float = None,
 ) -> Dict:
     """Send a single request and process the JSON response."""
+    
+    start_time = start_time or time.time()
+
     payload = {
         "prompt": prompt,
         "temperature": temperature,
         "max_tokens": max_tokens,
     }
-    
-    start_time = time.time()
     try:
         response = await client.post(ROUTER_URL, json=payload, timeout=60.0)
         response.raise_for_status()
+
         response_data = response.json()
         backend = response_data.get("backend", "")
-        response_text = response_data.get("response", "")
-        
+        response_text = response_data.get("response_text", "")
+        time_to_choose_backend = response_data.get("time_to_choose_backend", 0.0)
+        ttft = response_data.get("TTFT", 0.0)
+        avg_time_between_tokens = response_data.get("avg_time_between_tokens", 0.0)
         elapsed_time = time.time() - start_time
         
         return {
@@ -47,6 +51,9 @@ async def send_single_request(
             "response_length": len(response_text),
             "response_text": response_text,
             "status_code": response.status_code,
+            "TTFT": ttft,
+            "avg_time_between_tokens": avg_time_between_tokens,
+            "time_to_choose_backend": time_to_choose_backend,
         }
     except Exception as e:
         elapsed_time = time.time() - start_time
@@ -60,8 +67,8 @@ async def send_single_request(
 
 async def send_requests_concurrent(
     num_requests: int = NUM_REQUESTS,
-    concurrent_limit: int = 10,
-    prompt: str = "What is machine learning?",
+    concurrent_limit: int = 100,
+    prompts: List[str] = None,
 ) -> List[Dict]:
     """Send multiple requests with concurrency limit."""
     results = []
@@ -72,7 +79,7 @@ async def send_requests_concurrent(
         
         async def bounded_request(request_id: int):
             async with semaphore:
-                return await send_single_request(client, request_id, prompt=prompt)
+                return await send_single_request(client, request_id, prompt=prompts[request_id] if prompts else "What is machine learning?", start_time=start_time)
         
         # Create all tasks
         tasks = [bounded_request(i) for i in range(num_requests)]
@@ -120,7 +127,9 @@ def send_requests_sequential(
                 print(response_data)
                 backend = response_data.get("backend", "")
                 response_text = response_data.get("response", "")
-                
+                time_to_choose_backend = response_data.get("time_to_choose_backend", 0.0)
+                ttft = response_data.get("TTFT", 0.0)
+                avg_time_between_tokens = response_data.get("avg_time_between_tokens", 0.0)
                 elapsed = time.time() - request_start
                 results.append({
                     "request_id": i,
@@ -130,6 +139,9 @@ def send_requests_sequential(
                     "response_length": len(response_text),
                     "response_text": response_text,
                     "status_code": response.status_code,
+                    "TTFT": ttft,
+                    "avg_time_between_tokens": avg_time_between_tokens,
+                    "time_to_choose_backend": time_to_choose_backend,
                 })
             except Exception as e:
                 elapsed = time.time() - request_start
@@ -164,6 +176,7 @@ def print_statistics(results: List[Dict]):
     unique_backends = list(set([r["backend"] for r in successful]))
     for backend in unique_backends:
         times = [r["elapsed_time"] for r in successful if r["backend"] == backend]
+        print(f"count for {backend}: {len(times)}")
         print(f"\nResponse Times for {backend}:")
         print(f"  Min: {min(times):.2f}")
         print(f"  Max: {max(times):.2f}")
@@ -196,6 +209,11 @@ async def main():
     mode = "concurrent"
     num_requests = NUM_REQUESTS
     concurrent_limit = 10
+
+    with open(PROMPTS_PATH, 'rb') as f:
+        import pickle
+        data = pickle.load(f)
+    prompts = data[:num_requests]
     
     if len(sys.argv) > 1:
         if sys.argv[1] == "sequential":
@@ -215,10 +233,10 @@ async def main():
     print()
     
     if mode == "concurrent":
-        results = await send_requests_concurrent(num_requests, concurrent_limit)
+        results = await send_requests_concurrent(num_requests=num_requests, concurrent_limit=concurrent_limit, prompts=prompts)
     else:
-        results = send_requests_sequential(num_requests)
-    
+        results = send_requests_sequential(num_requests=num_requests)
+
     print_statistics(results)
     
     # rewrite results to file and append to the file

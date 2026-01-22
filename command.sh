@@ -1,1 +1,1 @@
-ssh shosseinikas@spartan-gpgpu092.hpc.unimelb.edu.au
+ssh shosseinikas@spartan-gpgpu115.hpc.unimelb.edu.au

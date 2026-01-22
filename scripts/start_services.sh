@@ -98,6 +98,10 @@ export TORCHINDUCTOR_CACHE_DIR=/data/gpfs/projects/punim2662/.cache/torch/induct
 export CUDA_CACHE_PATH=/data/gpfs/projects/punim2662/.cache/nvidia/
 export HF_HOME=/data/gpfs/projects/punim2662/.cache/huggingface
 
+module load GCCcore/11.3.0
+module load Python/3.11.3
+source env/bin/activate
+
 # Ensure MPS is active (optional but recommended when sharing GPUs).
 if ! "${ROOT_DIR}/scripts/start_mps.sh"; then
     echo "ERROR: Failed to start MPS" >&2
@@ -164,7 +168,7 @@ start_service() {
 # Router
 ROUTER_CMD="MODEL_A_URL=\"http://127.0.0.1:${UVICORN_MODEL_A_PORT}\" \
 MODEL_B_URL=\"http://127.0.0.1:${UVICORN_MODEL_B_PORT}\" \
-uvicorn router:app --host 0.0.0.0 --port ${ROUTER_PORT}"
+uvicorn servers.router:app --host 0.0.0.0 --port ${ROUTER_PORT}"
 
 if ! start_service "Router" "$ROUTER_CMD" "${ROUTER_PORT}"; then
     echo "ERROR: Failed to start Router" >&2
@@ -179,7 +183,7 @@ TENSOR_PARALLEL_SIZE=2 \
 GPU_MEMORY_UTILIZATION=${MODEL_B_GPU_MEMORY_UTILIZATION} \
 MAX_MODEL_LEN=${MODEL_B_MAX_LEN} \
 UVICORN_PORT=${UVICORN_MODEL_B_PORT} \
-uvicorn model_server:app --host 0.0.0.0 --port ${UVICORN_MODEL_B_PORT}"
+uvicorn servers.model_server:app --host 0.0.0.0 --port ${UVICORN_MODEL_B_PORT}"
 
 if ! start_service "Model B" "$MODEL_B_CMD" "${UVICORN_MODEL_B_PORT}"; then
     echo "ERROR: Failed to start Model B" >&2
@@ -194,7 +198,7 @@ TENSOR_PARALLEL_SIZE=2 \
 GPU_MEMORY_UTILIZATION=${MODEL_A_GPU_MEMORY_UTILIZATION} \
 MAX_MODEL_LEN=${MODEL_A_MAX_LEN} \
 UVICORN_PORT=${UVICORN_MODEL_A_PORT} \
-uvicorn model_server:app --host 0.0.0.0 --port ${UVICORN_MODEL_A_PORT}"
+uvicorn servers.model_server:app --host 0.0.0.0 --port ${UVICORN_MODEL_A_PORT}"
 
 if ! start_service "Model A" "$MODEL_A_CMD" "${UVICORN_MODEL_A_PORT}"; then
     echo "ERROR: Failed to start Model A" >&2
