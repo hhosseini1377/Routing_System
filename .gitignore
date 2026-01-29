@@ -209,3 +209,5 @@ __marimo__/
 model_checkpoints/
 datasets/
 outputs/
+
+*.slurm

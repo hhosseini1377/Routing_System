@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH --nodes 1
-#SBATCH --partition=gpu-a100
+#SBATCH --partition=gpu-l40s
 #SBATCH --gres=gpu:2
-#SBATCH --time=7-00:00:00 
+#SBATCH --time=1-00:00:00 
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=80GB
 #SBATCH -A punim2662 

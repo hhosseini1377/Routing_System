@@ -4,6 +4,7 @@ import os
 import random
 import uuid
 from typing import Dict, Optional, List, Tuple
+from collections import deque
 
 from contextlib import asynccontextmanager
 import httpx
@@ -18,6 +19,78 @@ import time
 
 def format_sse(data: str) -> str:
     return f"data: {data}\n\n"
+
+
+class RouterMetrics:
+    """Track system-level goodput metrics."""
+    
+    def __init__(self, window_size: int = 1000, slo_latency_ms: float = 5000):
+        self.window_size = window_size
+        self.slo_latency_ms = slo_latency_ms
+        self.request_latencies = deque(maxlen=window_size)  # end-to-end latencies
+        self.request_backends = deque(maxlen=window_size)  # which backend was chosen
+        self.request_outcomes = deque(maxlen=window_size)  # success/failure
+        self.request_times = deque(maxlen=window_size)  # timestamps
+        self.start_time = time.time()
+        
+    def record_request(self, latency_ms: float, backend: str, success: bool):
+        self.request_latencies.append(latency_ms)
+        self.request_backends.append(backend)
+        self.request_outcomes.append(success)
+        self.request_times.append(time.time())
+    
+    def get_goodput(self) -> float:
+        """SLO-compliant requests / total requests."""
+        if not self.request_outcomes:
+            return 0.0
+        slo_compliant = sum(
+            1 for lat, outcome in zip(self.request_latencies, self.request_outcomes)
+            if outcome and lat <= self.slo_latency_ms
+        )
+        return slo_compliant / len(self.request_outcomes)
+    
+    def get_metrics_dict(self) -> dict:
+        """Return aggregated system metrics."""
+        if not self.request_outcomes:
+            return {
+                "goodput": 0.0,
+                "total_requests": 0,
+                "success_rate": 0.0,
+                "slo_compliant_count": 0,
+                "avg_latency_ms": 0.0,
+                "timestamp": time.time()
+            }
+        
+        success_rate = sum(self.request_outcomes) / len(self.request_outcomes)
+        slo_compliant = sum(
+            1 for lat, outcome in zip(self.request_latencies, self.request_outcomes)
+            if outcome and lat <= self.slo_latency_ms
+        )
+        avg_latency = sum(self.request_latencies) / len(self.request_latencies)
+        
+        # Count by backend
+        backend_a_count = sum(1 for b in self.request_backends if "8001" in b)
+        backend_b_count = sum(1 for b in self.request_backends if "8002" in b)
+        
+        if self.request_times:
+            time_span = self.request_times[-1] - self.request_times[0]
+            throughput_rps = len(self.request_outcomes) / max(1, time_span)
+        else:
+            throughput_rps = 0.0
+        
+        return {
+            "goodput": slo_compliant / len(self.request_outcomes),
+            "total_requests": len(self.request_outcomes),
+            "success_rate": success_rate,
+            "slo_compliant_count": slo_compliant,
+            "slo_latency_ms": self.slo_latency_ms,
+            "avg_latency_ms": avg_latency,
+            "throughput_rps": throughput_rps,
+            "backend_a_routed": backend_a_count,
+            "backend_b_routed": backend_b_count,
+            "uptime_sec": time.time() - self.start_time,
+            "timestamp": time.time()
+        }
 
 
 class GenerateRequest(BaseModel):
@@ -52,6 +125,7 @@ async def lifespan(app: FastAPI):
     )
     router_config = RouterConfig()
     app.state.tokenizer = load_tokenizer(model_name=router_config.model_name)
+    app.state.metrics = RouterMetrics(slo_latency_ms=float(os.environ.get("SLO_LATENCY_MS", "5000")))
     
     # Start batch processor task
     _batch_processor_task = asyncio.create_task(batch_processor())
@@ -174,6 +248,7 @@ async def generate(req: GenerateRequest, request: Request):
     payload = req.model_dump()
     payload["request_id"] = request_id
     payload["start_time"] = time.time()
+    request_start = time.time()
     backend = await choose_backend(payload["prompt"])
     time_to_choose_backend = time.time() - payload["start_time"]
     async with _request_lock:
@@ -189,8 +264,25 @@ async def generate(req: GenerateRequest, request: Request):
             ttft = resp_data.get("TTFT", 0.0)
             avg_time_between_tokens = resp_data.get("avg_time_between_tokens", 0.0)
             
+            # Track metrics
+            end_to_end_latency = (time.time() - request_start) * 1000  # ms
+            app.state.metrics.record_request(
+                latency_ms=end_to_end_latency,
+                backend=backend,
+                success=True
+            )
+            
             # Add the backend to the response text and return a json response
             return JSONResponse(content={"backend": backend, "response_text": response_text, "time_to_choose_backend": time_to_choose_backend, "TTFT": ttft, "avg_time_between_tokens": avg_time_between_tokens})
+    except Exception as e:
+        # Track failed request
+        end_to_end_latency = (time.time() - request_start) * 1000
+        app.state.metrics.record_request(
+            latency_ms=end_to_end_latency,
+            backend=backend,
+            success=False
+        )
+        raise
     finally:
         async with _request_lock:
             _request_routes.pop(request_id, None)
@@ -216,3 +308,10 @@ async def abort_request(request_id: str) -> bool:
     async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.post(f"{backend}/abort", json={"request_id": request_id})
         return resp.status_code == 200
+
+
+@app.get("/metrics")
+async def get_metrics():
+    """Get system-level goodput metrics."""
+    metrics: RouterMetrics = app.state.metrics
+    return JSONResponse(content=metrics.get_metrics_dict())
