@@ -13,15 +13,32 @@ Usage:
 
 import asyncio
 import json
+import os
+import signal
 import subprocess
 import time
 import argparse
 import sys
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 from datetime import datetime
 import httpx
 import numpy as np
 from pathlib import Path
+
+
+def _to_native_json(obj):
+    """Convert numpy types to native Python so json.dump works."""
+    if isinstance(obj, dict):
+        return {k: _to_native_json(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_to_native_json(v) for v in obj]
+    if isinstance(obj, (np.integer, np.int64, np.int32)):
+        return int(obj)
+    if isinstance(obj, (np.floating, np.float64, np.float32)):
+        return float(obj)
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    return obj
 
 
 class PerformanceDataCollector:
@@ -42,7 +59,8 @@ class PerformanceDataCollector:
         self.test_duration = test_duration
         self.model_url = f"http://127.0.0.1:{port}"
         self.metrics_url = f"{self.model_url}/metrics"
-        self.results = []
+        # Map from (thread_perc, memory_util, load_rps, tensor_parallel_size, max_model_len?, max_num_seqs?, max_num_batched_tokens?) -> result dict
+        self.results: Dict[Tuple, Dict] = {}
         self.service_process = None
         
     async def fetch_metrics(self) -> Dict:
@@ -56,30 +74,40 @@ class PerformanceDataCollector:
             print(f"Warning: Failed to fetch metrics: {e}")
             return {}
     
-    async def send_request(self, client: httpx.AsyncClient, prompt: str) -> Dict:
+    async def send_request(self, client: httpx.AsyncClient, prompt: str, scheduled_wall_time: float) -> Dict:
         """Send a single request to the model."""
         payload = {
             "prompt": prompt,
             "temperature": 0.7,
             "max_tokens": 256,
-            "start_time": time.time(),
+            "start_time": scheduled_wall_time,
         }
         try:
-            start_time = time.time()
             resp = await client.post(f"{self.model_url}/generate", json=payload, timeout=120.0)
             resp.raise_for_status()
-            elapsed = time.time() - start_time
-            return {
+            response_data = resp.json()
+            elapsed = (time.time() - scheduled_wall_time) * 1000
+            result = {
                 "success": True,
-                "latency_ms": elapsed * 1000,
-                "response": resp.json(),
+                "state": "done",
+                "latency_ms": elapsed,
+                "response": response_data,
+                "prompt": prompt,
             }
+            # Extract TTFT and TBTs if available
+            if "TTFT" in response_data:
+                result["ttft_ms"] = response_data["TTFT"] * 1000  # Convert seconds to ms
+            if "time_between_tokens_ms" in response_data:
+                result["tbts_ms"] = response_data["time_between_tokens_ms"]
+            return result
         except Exception as e:
-            elapsed = time.time() - start_time
+            elapsed = (time.time() - scheduled_wall_time) * 1000
             return {
                 "success": False,
-                "latency_ms": elapsed * 1000,
+                "state": "failed",
+                "latency_ms": elapsed,
                 "error": str(e),
+                "prompt": prompt,
             }
     
     async def generate_load(
@@ -89,7 +117,9 @@ class PerformanceDataCollector:
         prompts: List[str],
         max_concurrency: int = 100,
         max_pending_multiplier: int = 10,
-    ) -> List[Dict]:
+        completion_timeout_sec: Optional[float] = None,
+        request_timeout_sec: float = 120.0,
+    ) -> Tuple[List[Dict], List[float], bool]:
         """
         Generate open-loop load at target RPS for specified duration.
 
@@ -102,21 +132,29 @@ class PerformanceDataCollector:
             prompts: Prompt list to cycle through
             max_concurrency: Max in-flight requests (caps pressure on the server/client)
             max_pending_multiplier: Max pending tasks = max_concurrency * multiplier
+            completion_timeout_sec: Max time to wait for requests to complete after send
+                phase. If None, wait indefinitely. When set, harsh setups won't block forever.
+            request_timeout_sec: Per-request HTTP timeout (seconds).
 
         Returns:
-            (results, request_times):
+            (results, request_times, completion_timed_out):
               - results: list of per-request dicts (success/latency/etc.)
               - request_times: wall-clock timestamps when requests were scheduled
+              - completion_timed_out: True if we stopped waiting before all requests finished
         """
         if target_rps <= 0:
-            return [], []
+            return [], [], False
 
         results: List[Dict] = []
         request_times: List[float] = []
+        completion_timed_out = False
 
         semaphore = asyncio.Semaphore(max_concurrency)
-        max_pending = max_concurrency * max_pending_multiplier
-        tasks: List[asyncio.Task] = []
+        # Need enough headroom to schedule all open-loop arrivals (target_rps * duration_sec)
+        min_pending_for_open_loop = int(target_rps * duration_sec) + 100
+        max_pending = max(max_concurrency * max_pending_multiplier, min_pending_for_open_loop)
+        # Track (task, scheduled_wall_time, prompt) so we can add timed_out results for cancelled tasks
+        task_infos: List[Tuple[asyncio.Task, float, str]] = []
 
         loop = asyncio.get_running_loop()
         loop_start = loop.time()          # monotonic, good for scheduling/sleeps
@@ -125,11 +163,11 @@ class PerformanceDataCollector:
         prompt_idx = 0
         sent_count = 0
 
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        async with httpx.AsyncClient(timeout=request_timeout_sec) as client:
 
             async def bounded_send(prompt: str, scheduled_wall_time: float):
                 async with semaphore:
-                    r = await self.send_request(client, prompt)
+                    r = await self.send_request(client, prompt, scheduled_wall_time)
                     # Attach when it was scheduled (arrival time)
                     r["scheduled_time"] = scheduled_wall_time
                     results.append(r)
@@ -146,25 +184,57 @@ class PerformanceDataCollector:
                     prompt_idx += 1
                     sent_count += 1
 
-                    scheduled_wall_time = wall_start + next_arrival_elapsed
+                    scheduled_wall_time = time.time()
                     request_times.append(scheduled_wall_time)
 
-                    tasks.append(asyncio.create_task(bounded_send(prompt, scheduled_wall_time)))
+                    task = asyncio.create_task(bounded_send(prompt, scheduled_wall_time))
+                    task_infos.append((task, scheduled_wall_time, prompt))
 
                     # Prevent unbounded growth of tasks waiting on the semaphore
-                    if len(tasks) >= max_pending:
-                        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-                        tasks = list(pending)
+                    # if len(task_infos) >= max_pending:
+                    #     tasks_only = [t for t, _, _ in task_infos]
+                    #     done_set, pending_set = await asyncio.wait(tasks_only, return_when=asyncio.FIRST_COMPLETED)
+                    #     task_infos = [(t, sw, p) for (t, sw, p) in task_infos if t in pending_set]
                 else:
                     # Sleep until next ideal arrival (or a small slice)
-                    sleep_for = max(0.0, next_arrival_elapsed - elapsed)
-                    await asyncio.sleep(min(0.01, sleep_for))
+                    await asyncio.sleep(max(0.0, next_arrival_elapsed - elapsed))
 
-            # Wait for all scheduled requests to finish
-            if tasks:
-                await asyncio.gather(*tasks, return_exceptions=False)
+            # Wait for scheduled requests to finish, with optional timeout
+            if task_infos:
+                tasks_only = [t for t, _, _ in task_infos]
+                if completion_timeout_sec is not None:
+                    try:
+                        await asyncio.wait_for(
+                            # Shield so wait_for timeout doesn't auto-cancel the tasks.
+                            asyncio.shield(asyncio.gather(*tasks_only, return_exceptions=True)),
+                            timeout=completion_timeout_sec,
+                        )
+                    except asyncio.TimeoutError:
+                        timeout_wall = time.time()
+                        # Anything still running (or cancelled) at this point is a timeout.
+                        timeout_infos = [(t, sw, p) for (t, sw, p) in task_infos if (not t.done()) or t.cancelled()]
+                        if timeout_infos:
+                            completion_timed_out = True
+                            for t, scheduled_wall_time, prompt in timeout_infos:
+                                if not t.done():
+                                    t.cancel()
+                                results.append({
+                                    "state": "timed_out",
+                                    "success": False,
+                                    "scheduled_time": scheduled_wall_time,
+                                    "prompt": prompt,
+                                    "latency_ms": (timeout_wall - scheduled_wall_time) * 1000,
+                                    "error": "completion_timeout",
+                                })
+                            await asyncio.gather(*tasks_only, return_exceptions=True)
+                            print(f"  Completion timeout after {completion_timeout_sec}s ({len(timeout_infos)} requests timed out)")
+                        else:
+                            # Everything already finished; continue quietly.
+                            await asyncio.gather(*tasks_only, return_exceptions=True)
+                else:
+                    await asyncio.gather(*tasks_only, return_exceptions=False)
 
-        return results, request_times
+        return results, request_times, completion_timed_out
     
     def start_model_server(
         self,
@@ -172,6 +242,9 @@ class PerformanceDataCollector:
         thread_percentage: int,
         startup_timeout_sec: int = 180,
         tensor_parallel_size: int = 2,
+        max_model_len: Optional[int] = None,
+        max_num_seqs: Optional[int] = None,
+        max_num_batched_tokens: Optional[int] = None,
     ) -> subprocess.Popen:
         """Start model server with specified configuration."""
         # Stop any existing server on this port
@@ -181,25 +254,33 @@ class PerformanceDataCollector:
             cwd=self.root_dir
         )
         time.sleep(2)
-        
-        # Start new server
+
+        env_parts = [
+            f"cd {self.root_dir} && ",
+            f"CUDA_MPS_ACTIVE_THREAD_PERCENTAGE={thread_percentage} ",
+            f"MODEL_NAME=\"{self.model_name}\" ",
+            f"TENSOR_PARALLEL_SIZE={tensor_parallel_size} ",
+            f"GPU_MEMORY_UTILIZATION={memory_util} ",
+            f"UVICORN_PORT={self.port} ",
+        ]
+        if max_model_len is not None:
+            env_parts.append(f"MAX_MODEL_LEN={max_model_len} ")
+        if max_num_seqs is not None:
+            env_parts.append(f"MAX_NUM_SEQS={max_num_seqs} ")
+        if max_num_batched_tokens is not None:
+            env_parts.append(f"MAX_NUM_BATCHED_TOKENS={max_num_batched_tokens} ")
+
         cmd = [
             "bash", "-c",
-            f"cd {self.root_dir} && "
-            f"CUDA_MPS_ACTIVE_THREAD_PERCENTAGE={thread_percentage} "
-            f"MODEL_NAME=\"{self.model_name}\" "
-            f"TENSOR_PARALLEL_SIZE={tensor_parallel_size} "
-            f"GPU_MEMORY_UTILIZATION={memory_util} "
-            f"MAX_MODEL_LEN=2048 "
-            f"UVICORN_PORT={self.port} "
-            f"uvicorn servers.model_server:app --host 0.0.0.0 --port {self.port}"
+            "".join(env_parts) + "uvicorn servers.model_server:app --host 0.0.0.0 --port " + str(self.port)
         ]
         
         proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True
+            text=True,
+            start_new_session=True,  # own process group so we can kill entire tree (uvicorn + vLLM workers)
         )
         
         # Wait for server to be ready
@@ -244,26 +325,57 @@ class PerformanceDataCollector:
         return proc
     
     def stop_model_server(self):
-        """Stop the model server."""
-        if self.service_process:
-            self.service_process.terminate()
+        """Stop the model server and all child processes (uvicorn, vLLM workers)."""
+        if self.service_process and self.service_process.poll() is None:
+            pid = self.service_process.pid
             try:
-                self.service_process.wait(timeout=5)
+                # Kill entire process group (bash + uvicorn + vLLM worker children)
+                if hasattr(os, "killpg") and pid is not None:
+                    pgid = os.getpgid(pid)
+                    os.killpg(pgid, signal.SIGTERM)
+                else:
+                    self.service_process.terminate()
+            except (ProcessLookupError, OSError):
+                self.service_process.terminate()
+            try:
+                self.service_process.wait(timeout=8)
             except subprocess.TimeoutExpired:
-                self.service_process.kill()
-        
+                try:
+                    if hasattr(os, "killpg") and pid is not None:
+                        os.killpg(os.getpgid(pid), signal.SIGKILL)
+                except (ProcessLookupError, OSError):
+                    pass
+                try:
+                    self.service_process.kill()
+                    self.service_process.wait(timeout=3)
+                except (subprocess.TimeoutExpired, ProcessLookupError):
+                    pass
+            self.service_process = None
+
+        # Fallback: kill by port (catches any process using it, including orphaned workers)
         subprocess.run(
-            f"pkill -f 'uvicorn.*port.*{self.port}' || true",
+            f"fuser -k {self.port}/tcp 2>/dev/null || true",
             shell=True,
-            cwd=self.root_dir
+            cwd=self.root_dir,
+        )
+        subprocess.run(
+            f"pkill -9 -f 'uvicorn.*port.*{self.port}' || true",
+            shell=True,
+            cwd=self.root_dir,
         )
         time.sleep(2)
     
     def compute_statistics(self, results: List[Dict], request_times: List[float]) -> Dict:
-        """Compute performance statistics from results."""
+        """Compute performance statistics from results.
+        total_requests = number of submitted requests (done + failed + timed_out).
+        Each result has state: 'done' | 'failed' | 'timed_out'.
+        """
         successful = [r for r in results if r.get("success", False)]
-        failed = [r for r in results if not r.get("success", False)]
-        
+        failed = [r for r in results if r.get("state") == "failed" or (not r.get("success", False) and r.get("state") != "timed_out")]
+        timed_out = [r for r in results if r.get("state") == "timed_out"]
+        # total_requests = all submitted (should equal len(results))
+        total_requests = len(results)
+
         if not successful:
             return {
                 "success_rate": 0.0,
@@ -272,22 +384,23 @@ class PerformanceDataCollector:
                 "p50_latency_ms": 0.0,
                 "p99_latency_ms": 0.0,
                 "max_latency_ms": 0.0,
-                "total_requests": len(results),
+                "total_requests": total_requests,
                 "failed_requests": len(failed),
+                "timed_out_requests": len(timed_out),
             }
-        
+
         latencies = [r["latency_ms"] for r in successful]
         latencies_sorted = sorted(latencies)
-        
-        # Compute throughput
+
+        # Compute throughput (successful completions per second)
         if len(request_times) > 1:
             time_span = request_times[-1] - request_times[0]
             throughput_rps = len(successful) / max(time_span, 0.1)
         else:
             throughput_rps = 0.0
-        
+
         return {
-            "success_rate": len(successful) / len(results),
+            "success_rate": len(successful) / total_requests,
             "throughput_rps": throughput_rps,
             "avg_latency_ms": np.mean(latencies),
             "p50_latency_ms": latencies_sorted[len(latencies_sorted) // 2],
@@ -295,8 +408,9 @@ class PerformanceDataCollector:
             "max_latency_ms": max(latencies),
             "min_latency_ms": min(latencies),
             "std_latency_ms": np.std(latencies),
-            "total_requests": len(results),
+            "total_requests": total_requests,
             "failed_requests": len(failed),
+            "timed_out_requests": len(timed_out),
         }
     
     async def run_experiment(
@@ -308,10 +422,21 @@ class PerformanceDataCollector:
         max_concurrency: int = 100,
         startup_timeout_sec: int = 180,
         tensor_parallel_size: int = 2,
-    ) -> Dict:
+        max_model_len: Optional[int] = None,
+        max_num_seqs: Optional[int] = None,
+        max_num_batched_tokens: Optional[int] = None,
+        completion_timeout_sec: Optional[float] = None,
+        request_timeout_sec: float = 90.0,
+    ) -> Optional[Dict]:
         """Run a single experiment configuration."""
+        # Cap how long we wait for completions so harsh setups don't block forever
+        if completion_timeout_sec is None:
+            completion_timeout_sec = max(self.test_duration * 3, 300)
+        warmup_completion_timeout = max(self.warmup_duration * 2, 120)
+
         print(f"\n{'='*80}")
-        print(f"Testing: mem={memory_util:.2f}, threads={thread_percentage}%, load={load_rps:.1f} RPS")
+        print(f"Testing: mem={memory_util:.2f}, threads={thread_percentage}%, load={load_rps:.1f} RPS"
+              f", max_model_len={max_model_len}, max_num_seqs={max_num_seqs}, max_num_batched_tokens={max_num_batched_tokens}")
         print(f"{'='*80}")
         
         try:
@@ -321,26 +446,53 @@ class PerformanceDataCollector:
                 thread_percentage,
                 startup_timeout_sec=startup_timeout_sec,
                 tensor_parallel_size=tensor_parallel_size,
+                max_model_len=max_model_len,
+                max_num_seqs=max_num_seqs,
+                max_num_batched_tokens=max_num_batched_tokens,
             )
             
             # Warmup
-            print(f"  Warmup ({self.warmup_duration}s)...")
-            await self.generate_load(load_rps, self.warmup_duration, prompts, max_concurrency=max_concurrency)
+            print(f"  Warmup ({self.warmup_duration}s, completion timeout {warmup_completion_timeout}s)...")
+            await self.generate_load(
+                load_rps,
+                self.warmup_duration,
+                prompts,
+                max_concurrency=max_concurrency,
+                completion_timeout_sec=warmup_completion_timeout,
+                request_timeout_sec=request_timeout_sec,
+            )
             await asyncio.sleep(2)
             
             # Collect metrics before test
             metrics_before = await self.fetch_metrics()
             
             # Run test
-            print(f"  Running test ({self.test_duration}s)...")
-            results, request_times = await self.generate_load(load_rps, self.test_duration, prompts, max_concurrency=max_concurrency)
+            print(f"  Running test ({self.test_duration}s, completion timeout {completion_timeout_sec}s)...")
+            results, request_times, completion_timed_out = await self.generate_load(
+                load_rps,
+                self.test_duration,
+                prompts,
+                max_concurrency=max_concurrency,
+                completion_timeout_sec=completion_timeout_sec,
+                request_timeout_sec=request_timeout_sec,
+            )
             
             # Collect metrics after test
             await asyncio.sleep(1)
             metrics_after = await self.fetch_metrics()
             
-            # Compute statistics
+            # Compute statistics (uses whatever completed; partial if timed out)
             stats = self.compute_statistics(results, request_times)
+            
+            # Collect all TTFTs and TBT lists (one per request)
+            ttfts_ms: List[float] = []
+            tbt_lists_ms: List[List[float]] = []
+            for r in results:
+                if r.get("success"):
+                    if "ttft_ms" in r:
+                        ttfts_ms.append(r["ttft_ms"])
+                    if "tbts_ms" in r:
+                        tbt_lists_ms.append(r["tbts_ms"])
             
             # Extract queue metrics
             queue_before = metrics_before.get("in_flight_requests", 0)
@@ -354,12 +506,18 @@ class PerformanceDataCollector:
                     "thread_percentage": thread_percentage,
                     "load_rps": load_rps,
                     "model_name": self.model_name,
+                    "max_model_len": max_model_len,
+                    "max_num_seqs": max_num_seqs,
+                    "max_num_batched_tokens": max_num_batched_tokens,
                 },
                 "performance": {
                     **stats,
                     "avg_queue_size": avg_queue,
                     "max_queue_size": metrics_after.get("in_flight_requests", 0),
+                    "completion_timed_out": completion_timed_out,
                 },
+                "ttfts_ms": ttfts_ms,
+                "tbt_lists_ms": tbt_lists_ms,
                 "metrics_before": metrics_before,
                 "metrics_after": metrics_after,
             }
@@ -374,16 +532,72 @@ class PerformanceDataCollector:
             
         except Exception as e:
             print(f"  ERROR: {e}")
-            return None
+            return {
+                "failed": True,
+                "error": str(e),
+                "config": {
+                    "memory_utilization": memory_util,
+                    "thread_percentage": thread_percentage,
+                    "load_rps": load_rps,
+                    "model_name": self.model_name,
+                    "max_model_len": max_model_len,
+                    "max_num_seqs": max_num_seqs,
+                    "max_num_batched_tokens": max_num_batched_tokens,
+                },
+            }
         finally:
             self.stop_model_server()
     
-    def save_results(self, output_file: str):
-        """Save collected results to JSON file."""
+    def load_results(self, output_file: str):
+        """Load existing results from JSON file if it exists."""
+        if Path(output_file).exists():
+            try:
+                with open(output_file, "r") as f:
+                    data = json.load(f)
+                    for item in data:
+                        setup = item["setup"]
+                        key = (
+                            int(setup["thread_percentage"]),
+                            float(setup["memory_util"]),
+                            float(setup["load_rps"]),
+                            int(setup["tensor_parallel_size"]),
+                            setup.get("max_model_len"),
+                            setup.get("max_num_seqs"),
+                            setup.get("max_num_batched_tokens"),
+                        )
+                        self.results[key] = item["result"]
+                    print(f"Loaded {len(self.results)} existing results from {output_file}")
+            except Exception as e:
+                print(f"Warning: Failed to load existing results: {e}")
+    
+    def save_results(self, output_file: str, incremental: bool = False):
+        """Save collected results to JSON file. Map keys (setup tuples) become 'setup' objects.
+        
+        Args:
+            output_file: Path to output JSON file
+            incremental: If True, only print a message (for incremental saves after each experiment)
+        """
+        serializable = []
+        for k, v in self.results.items():
+            setup = {
+                "thread_percentage": _to_native_json(k[0]),
+                "memory_util": _to_native_json(k[1]),
+                "load_rps": _to_native_json(k[2]),
+                "tensor_parallel_size": _to_native_json(k[3]),
+            }
+            # Extended key (max_model_len, max_num_seqs, max_num_batched_tokens); old files have 4-tuple keys
+            if len(k) >= 7:
+                setup["max_model_len"] = _to_native_json(k[4])
+                setup["max_num_seqs"] = _to_native_json(k[5])
+                setup["max_num_batched_tokens"] = _to_native_json(k[6])
+            serializable.append({"setup": setup, "result": _to_native_json(v)})
         with open(output_file, "w") as f:
-            json.dump(self.results, f, indent=2)
-        print(f"\n\nResults saved to {output_file}")
-        print(f"Total experiments: {len(self.results)}")
+            json.dump(serializable, f, indent=2)
+        if incremental:
+            print(f"  Saved {len(self.results)} experiment(s) to {output_file}")
+        else:
+            print(f"\n\nResults saved to {output_file}")
+            print(f"Total experiments: {len(self.results)}")
 
 
 def load_prompts(prompts_path: str = None, num_prompts: int = 1000) -> List[str]:
@@ -438,18 +652,68 @@ async def main():
                         help="Seconds to wait for model server /metrics to become ready")
     parser.add_argument("--tensor-parallel-size", type=int, default=2,
                         help="TENSOR_PARALLEL_SIZE for vLLM (must be <= visible GPU count)")
+    parser.add_argument("--max-model-len", type=int, default=2048,
+                        help="MAX_MODEL_LEN for vLLM (default 2048). Ignored if --max-model-len-range is set.")
+    parser.add_argument("--max-model-len-range", type=int, nargs=2, default=None,
+                        metavar=("MIN", "MAX"), help="Sweep max_model_len over [MIN, MAX] with --max-model-len-steps")
+    parser.add_argument("--max-model-len-steps", type=int, default=1,
+                        help="Number of max_model_len steps when using --max-model-len-range (default 1)")
+    parser.add_argument("--max-num-seqs", type=int, default=None,
+                        help="MAX_NUM_SEQS for vLLM (optional). Ignored if --max-num-seqs-range is set.")
+    parser.add_argument("--max-num-seqs-range", type=int, nargs=2, default=None,
+                        metavar=("MIN", "MAX"), help="Sweep max_num_seqs over [MIN, MAX] with --max-num-seqs-steps")
+    parser.add_argument("--max-num-seqs-steps", type=int, default=1,
+                        help="Number of max_num_seqs steps when using --max-num-seqs-range (default 1)")
+    parser.add_argument("--max-num-batched-tokens", type=int, default=None,
+                        help="MAX_NUM_BATCHED_TOKENS for vLLM (optional). Ignored if --max-num-batched-tokens-range is set.")
+    parser.add_argument("--max-num-batched-tokens-range", type=int, nargs=2, default=None,
+                        metavar=("MIN", "MAX"), help="Sweep max_num_batched_tokens over [MIN, MAX] with --max-num-batched-tokens-steps")
+    parser.add_argument("--max-num-batched-tokens-steps", type=int, default=1,
+                        help="Number of max_num_batched_tokens steps when using --max-num-batched-tokens-range (default 1)")
+    parser.add_argument("--completion-timeout-sec", type=float, default=None,
+                        help="Max seconds to wait for requests to complete after send phase (default: max(test_duration*3, 300)). Harsh setups will stop early.")
+    parser.add_argument("--request-timeout-sec", type=float, default=90.0,
+                        help="Per-request HTTP timeout in seconds (default: 90)")
     
     args = parser.parse_args()
-    
+
+    # Optional sweep: max_model_len, max_num_seqs, max_num_batched_tokens
+    if args.max_model_len_range is not None and args.max_model_len_steps > 1:
+        max_model_len_values = np.linspace(
+            args.max_model_len_range[0], args.max_model_len_range[1],
+            args.max_model_len_steps, dtype=int
+        ).tolist()
+    else:
+        max_model_len_values = [args.max_model_len]
+
+    if args.max_num_seqs_range is not None and args.max_num_seqs_steps > 1:
+        max_num_seqs_values = np.linspace(
+            args.max_num_seqs_range[0], args.max_num_seqs_range[1],
+            args.max_num_seqs_steps, dtype=int
+        ).tolist()
+    else:
+        max_num_seqs_values = [args.max_num_seqs]
+
+    if args.max_num_batched_tokens_range is not None and args.max_num_batched_tokens_steps > 1:
+        max_num_batched_tokens_values = np.linspace(
+            args.max_num_batched_tokens_range[0], args.max_num_batched_tokens_range[1],
+            args.max_num_batched_tokens_steps, dtype=int
+        ).tolist()
+    else:
+        max_num_batched_tokens_values = [args.max_num_batched_tokens]
+
     # Generate parameter grid
     memory_values = np.linspace(args.memory_range[0], args.memory_range[1], args.memory_steps)
     thread_values = np.linspace(args.thread_range[0], args.thread_range[1], args.thread_steps, dtype=int)
     load_values = np.linspace(args.load_range[0], args.load_range[1], args.load_steps)
-    
-    total_experiments = len(memory_values) * len(thread_values) * len(load_values)
+
+    total_experiments = (
+        len(memory_values) * len(thread_values) * len(load_values)
+        * len(max_model_len_values) * len(max_num_seqs_values) * len(max_num_batched_tokens_values)
+    )
     if args.max_experiments:
         total_experiments = min(total_experiments, args.max_experiments)
-    
+
     print(f"\n{'='*80}")
     print(f"PERFORMANCE DATA COLLECTION")
     print(f"{'='*80}")
@@ -457,6 +721,9 @@ async def main():
     print(f"Memory range: {args.memory_range[0]:.2f} - {args.memory_range[1]:.2f} ({args.memory_steps} steps)")
     print(f"Thread range: {args.thread_range[0]} - {args.thread_range[1]}% ({args.thread_steps} steps)")
     print(f"Load range: {args.load_range[0]:.1f} - {args.load_range[1]:.1f} RPS ({args.load_steps} steps)")
+    print(f"max_model_len: {max_model_len_values}")
+    print(f"max_num_seqs: {max_num_seqs_values}")
+    print(f"max_num_batched_tokens: {max_num_batched_tokens_values}")
     print(f"Total experiments: {total_experiments}")
     print(f"Estimated time: ~{total_experiments * (args.warmup_duration + args.test_duration + 5) / 60:.1f} minutes")
     print(f"{'='*80}\n")
@@ -473,35 +740,71 @@ async def main():
         test_duration=args.test_duration,
     )
     
+    # Load existing results if file exists (for resuming)
+    collector.load_results(args.output)
+    
     # Run experiments
-    experiment_count = 0
+    experiment_count = len(collector.results)  # Start from existing count
     for memory_util in memory_values:
         for thread_perc in thread_values:
             for load_rps in load_values:
+                for max_model_len in max_model_len_values:
+                    for max_num_seqs in max_num_seqs_values:
+                        for max_num_batched_tokens in max_num_batched_tokens_values:
+                            if args.max_experiments and experiment_count >= args.max_experiments:
+                                break
+
+                            # Skip if this setup already exists (7-tuple key)
+                            setup_key = (
+                                thread_perc,
+                                float(memory_util),
+                                float(load_rps),
+                                args.tensor_parallel_size,
+                                max_model_len,
+                                max_num_seqs,
+                                max_num_batched_tokens,
+                            )
+                            if setup_key in collector.results:
+                                print(f"\nSkipping (already exists): mem={memory_util:.2f}, threads={thread_perc}%, load={load_rps:.1f} RPS, max_model_len={max_model_len}, max_num_seqs={max_num_seqs}, max_num_batched_tokens={max_num_batched_tokens}")
+                                experiment_count += 1
+                                continue
+
+                            result = await collector.run_experiment(
+                                memory_util=memory_util,
+                                thread_percentage=thread_perc,
+                                load_rps=load_rps,
+                                prompts=prompts,
+                                max_concurrency=args.max_concurrency,
+                                startup_timeout_sec=args.startup_timeout_sec,
+                                tensor_parallel_size=args.tensor_parallel_size,
+                                max_model_len=max_model_len,
+                                max_num_seqs=max_num_seqs,
+                                max_num_batched_tokens=max_num_batched_tokens,
+                                completion_timeout_sec=args.completion_timeout_sec,
+                                request_timeout_sec=args.request_timeout_sec,
+                            )
+
+                            collector.results[setup_key] = result
+                            experiment_count += 1
+                            # Save incrementally after each experiment
+                            collector.save_results(args.output, incremental=True)
+                            if result.get("failed"):
+                                print(f"\nProgress: {experiment_count}/{total_experiments} (failed)")
+                            else:
+                                print(f"\nProgress: {experiment_count}/{total_experiments}")
+
+                        if args.max_experiments and experiment_count >= args.max_experiments:
+                            break
+                    if args.max_experiments and experiment_count >= args.max_experiments:
+                        break
                 if args.max_experiments and experiment_count >= args.max_experiments:
                     break
-                
-                result = await collector.run_experiment(
-                    memory_util=memory_util,
-                    thread_percentage=thread_perc,
-                    load_rps=load_rps,
-                    prompts=prompts,
-                    max_concurrency=args.max_concurrency,
-                    startup_timeout_sec=args.startup_timeout_sec,
-                    tensor_parallel_size=args.tensor_parallel_size,
-                )
-                
-                if result:
-                    collector.results.append(result)
-                    experiment_count += 1
-                    print(f"\nProgress: {experiment_count}/{total_experiments}")
-            
             if args.max_experiments and experiment_count >= args.max_experiments:
                 break
         if args.max_experiments and experiment_count >= args.max_experiments:
             break
     
-    # Save results
+    # Final save (redundant but ensures everything is saved)
     collector.save_results(args.output)
     
     print(f"\n✓ Data collection complete!")

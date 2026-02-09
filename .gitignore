@@ -211,3 +211,6 @@ datasets/
 outputs/
 
 *.slurm
+temp.py
+temp.ipynb
+performance*

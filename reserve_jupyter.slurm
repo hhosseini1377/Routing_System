@@ -1,9 +1,9 @@
 #!/bin/bash
 #SBATCH --nodes 1
-#SBATCH --partition=gpu-l40s
+#SBATCH --partition=gpu-a100-short
 #SBATCH --gres=gpu:2
-#SBATCH --time=1-00:00:00 
-#SBATCH --cpus-per-task=16
+#SBATCH --time=04:00:00 
+#SBATCH --cpus-per-task=8
 #SBATCH --mem=80GB
 #SBATCH -A punim2662 
 #SBATCH --output=outputs/jupyter_%j.out

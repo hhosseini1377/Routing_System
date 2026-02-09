@@ -32,10 +32,13 @@ class ModelMetrics:
         self.in_flight_requests = 0
         self.start_time = time.time()
         self.request_times = deque(maxlen=window_size)  # for throughput calculation
-        
-    def record_success(self, latency_ms: float, ttft_ms: float):
+        self.tbt_lists: list[list[float]] = []  # list of TBT lists (one per request), ms
+
+    def record_success(self, latency_ms: float, ttft_ms: float, tbt_ms_list: Optional[list] = None):
         self.latencies.append(latency_ms)
         self.ttfts.append(ttft_ms)
+        if tbt_ms_list:
+            self.tbt_lists.append(tbt_ms_list)
         self.success_count += 1
         self.total_requests += 1
         self.request_times.append(time.time())
@@ -49,8 +52,8 @@ class ModelMetrics:
         if not self.request_times:
             return 0.0
         time_span = self.request_times[-1] - self.request_times[0]
-        if time_span < 1:
-            return float(len(self.request_times))
+        if time_span <= 0:
+            return 0.0
         return len(self.request_times) / time_span
     
     def get_metrics_dict(self) -> dict:
@@ -70,6 +73,15 @@ class ModelMetrics:
             avg_ttft = sum(self.ttfts) / len(self.ttfts)
         else:
             avg_ttft = 0.0
+
+        all_tbts = [t for lst in self.tbt_lists for t in lst]
+        if all_tbts:
+            tbts_sorted = sorted(all_tbts)
+            avg_tbt = sum(all_tbts) / len(all_tbts)
+            p50_tbt = tbts_sorted[len(tbts_sorted) // 2]
+            p99_tbt = tbts_sorted[min(int(len(tbts_sorted) * 0.99), len(tbts_sorted) - 1)]
+        else:
+            avg_tbt = p50_tbt = p99_tbt = 0.0
         
         uptime_sec = time.time() - self.start_time
         
@@ -84,6 +96,9 @@ class ModelMetrics:
             "p50_latency_ms": p50_lat,
             "p99_latency_ms": p99_lat,
             "avg_ttft_ms": avg_ttft,
+            "avg_tbt_ms": avg_tbt,
+            "p50_tbt_ms": p50_tbt,
+            "p99_tbt_ms": p99_tbt,
             "uptime_sec": uptime_sec,
             "timestamp": time.time()
         }
@@ -102,14 +117,22 @@ async def lifespan(app: FastAPI):
     model_name = os.environ.get("MODEL_NAME", "Qwen/Qwen3-1.8B")
     tensor_parallel_size = int(os.environ.get("TENSOR_PARALLEL_SIZE", "1"))
     max_model_len = int(os.environ.get("MAX_MODEL_LEN", "8192"))
+    max_num_seqs_env = os.environ.get("MAX_NUM_SEQS")
+    max_num_batched_tokens_env = os.environ.get("MAX_NUM_BATCHED_TOKENS")
     gpu_memory_utilization = float(os.environ.get("GPU_MEMORY_UTILIZATION", "0.9"))
 
-    engine_args = AsyncEngineArgs(
-        model=model_name,
-        tensor_parallel_size=tensor_parallel_size,
-        max_model_len=max_model_len,
-        gpu_memory_utilization=gpu_memory_utilization,
-    )
+    engine_kwargs = {
+        "model": model_name,
+        "tensor_parallel_size": tensor_parallel_size,
+        "max_model_len": max_model_len,
+        "gpu_memory_utilization": gpu_memory_utilization,
+    }
+    if max_num_seqs_env:
+        engine_kwargs["max_num_seqs"] = int(max_num_seqs_env)
+    if max_num_batched_tokens_env:
+        engine_kwargs["max_num_batched_tokens"] = int(max_num_batched_tokens_env)
+
+    engine_args = AsyncEngineArgs(**engine_kwargs)
     try:
         app.state.engine = AsyncLLMEngine.from_engine_args(engine_args)
     except Exception as e:
@@ -135,13 +158,12 @@ app = FastAPI(lifespan=lifespan)
 async def generate(req: GenerateRequest, request: Request):
     request_id = req.request_id or str(uuid.uuid4())
     sampling = SamplingParams(temperature=req.temperature, max_tokens=req.max_tokens)
-    start_time = req.start_time 
+    start_time = req.start_time if req.start_time is not None else time.time()
     engine: AsyncLLMEngine = app.state.engine
     metrics: ModelMetrics = app.state.metrics
 
     # Track in-flight request
     metrics.in_flight_requests += 1
-    request_start = time.time()
     
     try:
         results = engine.generate(
@@ -162,7 +184,7 @@ async def generate(req: GenerateRequest, request: Request):
                 
                 current_time = time.time()
                 if is_first_token:
-                    TTFT = current_time - req.start_time
+                    TTFT = current_time - start_time
                     is_first_token = False
                 else:
                     time_between_tokens.append(current_time - last_token_time)
@@ -172,17 +194,22 @@ async def generate(req: GenerateRequest, request: Request):
                 
             # Compute metrics
             end_to_end_latency = time.time() - start_time
+            tbt_ms_list = [t * 1000 for t in time_between_tokens]
             metrics.record_success(
                 latency_ms=end_to_end_latency * 1000,
-                ttft_ms = TTFT * 1000
+                ttft_ms=TTFT * 1000,
+                tbt_ms_list=tbt_ms_list,
             )
-            
+
+            # Latency from start_time (client scheduled time) to completion
+            latency_sec = time.time() - start_time
             payload = {
                 "request_id": request_id,
                 "model": app.state.model_name,
                 "response_text": text,
                 "TTFT": TTFT,
-                "avg_time_between_tokens": sum(time_between_tokens) / len(time_between_tokens) if time_between_tokens else 0.0
+                "time_between_tokens_ms": tbt_ms_list,
+                "latency_sec": latency_sec,
             }
 
         except asyncio.CancelledError:

@@ -30,6 +30,7 @@ async def send_single_request(
         "prompt": prompt,
         "temperature": temperature,
         "max_tokens": max_tokens,
+        "start_time": start_time,
     }
     try:
         response = await client.post(ROUTER_URL, json=payload, timeout=60.0)
@@ -41,8 +42,10 @@ async def send_single_request(
         time_to_choose_backend = response_data.get("time_to_choose_backend", 0.0)
         ttft = response_data.get("TTFT", 0.0)
         avg_time_between_tokens = response_data.get("avg_time_between_tokens", 0.0)
-        elapsed_time = time.time() - start_time
-        
+        # Use server-computed latency (from start_time) when present
+        latency_ms = response_data.get("latency_ms")
+        elapsed_time = (latency_ms / 1000.0) if latency_ms is not None else (time.time() - start_time)
+
         return {
             "request_id": request_id,
             "success": True,

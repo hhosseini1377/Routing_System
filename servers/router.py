@@ -98,6 +98,7 @@ class GenerateRequest(BaseModel):
     temperature: float = 0.7
     max_tokens: int = 256
     request_id: Optional[str] = None
+    start_time: Optional[float] = None  # client scheduled_wall_time for latency/TTFT/TBT
 
 
 MODEL_A_URL = os.environ.get("MODEL_A_URL", "http://127.0.0.1:8001")
@@ -245,12 +246,15 @@ async def choose_backend(prompt: str) -> str:
 @app.post("/generate")
 async def generate(req: GenerateRequest, request: Request):
     request_id = req.request_id or str(uuid.uuid4())
-    payload = req.model_dump()
+    # Use client-provided start_time (scheduled_wall_time) for latency/TTFT/TBT; fallback to now
+    request_start = req.start_time if req.start_time is not None else time.time()
+    payload = req.model_dump(exclude={"start_time"})
     payload["request_id"] = request_id
-    payload["start_time"] = time.time()
-    request_start = time.time()
+    payload["start_time"] = request_start
+
     backend = await choose_backend(payload["prompt"])
-    time_to_choose_backend = time.time() - payload["start_time"]
+    time_to_choose_backend = time.time() - request_start
+
     async with _request_lock:
         _request_routes[request_id] = backend
 
@@ -262,23 +266,36 @@ async def generate(req: GenerateRequest, request: Request):
 
             response_text = resp_data.get("response_text", "")
             ttft = resp_data.get("TTFT", 0.0)
-            avg_time_between_tokens = resp_data.get("avg_time_between_tokens", 0.0)
-            
-            # Track metrics
-            end_to_end_latency = (time.time() - request_start) * 1000  # ms
+            time_between_tokens_ms = resp_data.get("time_between_tokens_ms", [])
+            avg_time_between_tokens = resp_data.get("avg_time_between_tokens") or (
+                (sum(time_between_tokens_ms) / len(time_between_tokens_ms) / 1000.0) if time_between_tokens_ms else 0.0
+            )
+            # End-to-end latency from scheduled_wall_time (request_start) to response received
+            latency_sec = time.time() - request_start
+            latency_ms = latency_sec * 1000
+            ttft_ms = ttft * 1000.0
+
             app.state.metrics.record_request(
-                latency_ms=end_to_end_latency,
+                latency_ms=latency_ms,
                 backend=backend,
                 success=True
             )
-            
-            # Add the backend to the response text and return a json response
-            return JSONResponse(content={"backend": backend, "response_text": response_text, "time_to_choose_backend": time_to_choose_backend, "TTFT": ttft, "avg_time_between_tokens": avg_time_between_tokens})
+
+            return JSONResponse(content={
+                "backend": backend,
+                "response_text": response_text,
+                "time_to_choose_backend": time_to_choose_backend,
+                "TTFT": ttft,
+                "TTFT_ms": ttft_ms,
+                "avg_time_between_tokens": avg_time_between_tokens,
+                "time_between_tokens_ms": time_between_tokens_ms,
+                "latency_sec": latency_sec,
+                "latency_ms": latency_ms,
+            })
     except Exception as e:
-        # Track failed request
-        end_to_end_latency = (time.time() - request_start) * 1000
+        latency_ms = (time.time() - request_start) * 1000
         app.state.metrics.record_request(
-            latency_ms=end_to_end_latency,
+            latency_ms=latency_ms,
             backend=backend,
             success=False
         )
