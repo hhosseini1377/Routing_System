@@ -13,10 +13,11 @@ source ./env/bin/activate
 
 python -m profiler.collect_routing_performance_data \
   --router-url "http://127.0.0.1:8000" \
-  --load-rps 20 \
+  --load-rps 30 \
   --duration 60 \
   --output routing_performance.json \
-  --prompts-path "datasets/lmsys_chat1m_prompts_100k_cleaned.pkl" \
+  --prompts-path "datasets/lmsys_chat1m_test.pkl" \
   --request-timeout-sec 120 \
   --completion-timeout-sec 300 \
+  
   "$@"

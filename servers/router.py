@@ -3,9 +3,10 @@ import json
 import os
 import random
 import uuid
-from typing import Dict, Optional, List, Tuple
+from typing import Dict, Optional, List
 from collections import deque
 
+import numpy as np
 from contextlib import asynccontextmanager
 import httpx
 from fastapi import FastAPI, Request
@@ -15,83 +16,183 @@ from pydantic import BaseModel
 from router_model.regression_models import TruncatedModel, load_tokenizer
 from router_model.config import RouterModelConfig
 from config import RouterConfig
+from .backend_selector import BackendSelector
 import time
 
 def format_sse(data: str) -> str:
     return f"data: {data}\n\n"
 
 
+def _meets_slo(
+    success: bool,
+    ttft_ms: Optional[float],
+    tbt_list_ms: List[float],
+    slo_ttft_ms: float,
+    slo_tbt_p95_ms: float,
+) -> bool:
+    """Request meets SLO if: success AND TTFT < threshold AND p95(TBTs) < threshold."""
+    if not success:
+        return False
+    if ttft_ms is None or ttft_ms >= slo_ttft_ms:
+        return False
+    if tbt_list_ms:
+        p95_tbt = float(np.percentile(tbt_list_ms, 95))
+        if p95_tbt >= slo_tbt_p95_ms:
+            return False
+    return True
+
+
 class RouterMetrics:
-    """Track system-level goodput metrics."""
-    
-    def __init__(self, window_size: int = 1000, slo_latency_ms: float = 5000):
+    """Track system-level goodput metrics.
+
+    Goodput = throughput * SLO attainment rate.
+    SLO: request is good if TTFT < slo_ttft_ms AND p95(TBTs) < slo_tbt_p95_ms.
+    """
+
+    def __init__(
+        self,
+        window_size: int = 1000,
+        slo_ttft_ms: float = 500.0,
+        slo_tbt_p95_ms: float = 100.0,
+    ):
         self.window_size = window_size
-        self.slo_latency_ms = slo_latency_ms
+        self.slo_ttft_ms = slo_ttft_ms
+        self.slo_tbt_p95_ms = slo_tbt_p95_ms
         self.request_latencies = deque(maxlen=window_size)  # end-to-end latencies
         self.request_backends = deque(maxlen=window_size)  # which backend was chosen
         self.request_outcomes = deque(maxlen=window_size)  # success/failure
         self.request_times = deque(maxlen=window_size)  # timestamps
+        self.ttfts_ms = deque(maxlen=window_size)  # TTFT in ms per request (None if failed)
+        self.tbt_lists_ms = deque(maxlen=window_size)  # list of TBT lists per request
         self.start_time = time.time()
-        
-    def record_request(self, latency_ms: float, backend: str, success: bool):
+
+    def record_request(
+        self,
+        latency_ms: float,
+        backend: str,
+        success: bool,
+        ttft_ms: Optional[float] = None,
+        time_between_tokens_ms: Optional[List[float]] = None,
+    ):
         self.request_latencies.append(latency_ms)
         self.request_backends.append(backend)
         self.request_outcomes.append(success)
         self.request_times.append(time.time())
-    
+        self.ttfts_ms.append(ttft_ms if success else None)
+        self.tbt_lists_ms.append(time_between_tokens_ms if success else [])
+
     def get_goodput(self) -> float:
-        """SLO-compliant requests / total requests."""
+        """Goodput = throughput * SLO attainment rate (SLO-compliant RPS)."""
         if not self.request_outcomes:
             return 0.0
         slo_compliant = sum(
-            1 for lat, outcome in zip(self.request_latencies, self.request_outcomes)
-            if outcome and lat <= self.slo_latency_ms
+            _meets_slo(
+                outcome,
+                ttft,
+                list(tbts) if tbts else [],
+                self.slo_ttft_ms,
+                self.slo_tbt_p95_ms,
+            )
+            for outcome, ttft, tbts in zip(
+                self.request_outcomes, self.ttfts_ms, self.tbt_lists_ms
+            )
         )
-        return slo_compliant / len(self.request_outcomes)
-    
-    def get_metrics_dict(self) -> dict:
-        """Return aggregated system metrics."""
-        if not self.request_outcomes:
-            return {
-                "goodput": 0.0,
-                "total_requests": 0,
-                "success_rate": 0.0,
-                "slo_compliant_count": 0,
-                "avg_latency_ms": 0.0,
-                "timestamp": time.time()
-            }
-        
-        success_rate = sum(self.request_outcomes) / len(self.request_outcomes)
-        slo_compliant = sum(
-            1 for lat, outcome in zip(self.request_latencies, self.request_outcomes)
-            if outcome and lat <= self.slo_latency_ms
-        )
-        avg_latency = sum(self.request_latencies) / len(self.request_latencies)
-        
-        # Count by backend
-        backend_a_count = sum(1 for b in self.request_backends if "8001" in b)
-        backend_b_count = sum(1 for b in self.request_backends if "8002" in b)
-        
+        slo_attainment_rate = slo_compliant / len(self.request_outcomes)
         if self.request_times:
             time_span = self.request_times[-1] - self.request_times[0]
             throughput_rps = len(self.request_outcomes) / max(1, time_span)
         else:
             throughput_rps = 0.0
-        
-        return {
-            "goodput": slo_compliant / len(self.request_outcomes),
+        return throughput_rps * slo_attainment_rate
+    
+    def get_metrics_dict(self, detail: str = "full") -> dict:
+        """Return aggregated system metrics.
+
+        detail: "full" returns ttfts_ms, tbt_lists_ms, chosen_backends as lists;
+                "summary" returns avg_ttft_ms, avg_tbt_ms, backend_counts instead.
+        """
+        if not self.request_outcomes:
+            empty = {
+                "goodput": 0.0,
+                "total_requests": 0,
+                "success_rate": 0.0,
+                "slo_compliant_count": 0,
+                "slo_attainment_rate": 0.0,
+                "throughput_rps": 0.0,
+                "avg_latency_ms": 0.0,
+                "slo_ttft_ms": self.slo_ttft_ms,
+                "slo_tbt_p95_ms": self.slo_tbt_p95_ms,
+                "timestamp": time.time(),
+            }
+            if detail == "full":
+                empty["ttfts_ms"] = []
+                empty["tbt_lists_ms"] = []
+                empty["chosen_backends"] = []
+            else:
+                empty["avg_ttft_ms"] = 0.0
+                empty["avg_tbt_ms"] = 0.0
+                empty["backend_counts"] = {}
+            return empty
+
+        success_rate = sum(self.request_outcomes) / len(self.request_outcomes)
+        slo_compliant = sum(
+            _meets_slo(
+                outcome,
+                ttft,
+                list(tbts) if tbts else [],
+                self.slo_ttft_ms,
+                self.slo_tbt_p95_ms,
+            )
+            for outcome, ttft, tbts in zip(
+                self.request_outcomes, self.ttfts_ms, self.tbt_lists_ms
+            )
+        )
+        slo_attainment_rate = slo_compliant / len(self.request_outcomes)
+        avg_latency = sum(self.request_latencies) / len(self.request_latencies)
+
+        # Count by backend
+        backend_a_count = sum(1 for b in self.request_backends if "8001" in b)
+        backend_b_count = sum(1 for b in self.request_backends if "8002" in b)
+
+        if self.request_times:
+            time_span = self.request_times[-1] - self.request_times[0]
+            throughput_rps = len(self.request_outcomes) / max(1, time_span)
+        else:
+            throughput_rps = 0.0
+
+        goodput = throughput_rps * slo_attainment_rate
+
+        result = {
+            "goodput": goodput,
             "total_requests": len(self.request_outcomes),
             "success_rate": success_rate,
             "slo_compliant_count": slo_compliant,
-            "slo_latency_ms": self.slo_latency_ms,
-            "avg_latency_ms": avg_latency,
+            "slo_attainment_rate": slo_attainment_rate,
             "throughput_rps": throughput_rps,
+            "slo_ttft_ms": self.slo_ttft_ms,
+            "slo_tbt_p95_ms": self.slo_tbt_p95_ms,
+            "avg_latency_ms": avg_latency,
             "backend_a_routed": backend_a_count,
             "backend_b_routed": backend_b_count,
             "uptime_sec": time.time() - self.start_time,
-            "timestamp": time.time()
+            "timestamp": time.time(),
         }
 
+        if detail == "full":
+            result["ttfts_ms"] = list(self.ttfts_ms)
+            result["tbt_lists_ms"] = [list(tbts) for tbts in self.tbt_lists_ms]
+            result["chosen_backends"] = list(self.request_backends)
+        else:
+            ttfts_valid = [t for t in self.ttfts_ms if t is not None]
+            result["avg_ttft_ms"] = sum(ttfts_valid) / len(ttfts_valid) if ttfts_valid else 0.0
+            all_tbts = [tbt for tbts in self.tbt_lists_ms for tbt in tbts]
+            result["avg_tbt_ms"] = sum(all_tbts) / len(all_tbts) if all_tbts else 0.0
+            result["backend_counts"] = dict(
+                (b, sum(1 for x in self.request_backends if x == b))
+                for b in set(self.request_backends)
+            )
+
+        return result
 
 class GenerateRequest(BaseModel):
     prompt: str
@@ -99,6 +200,12 @@ class GenerateRequest(BaseModel):
     max_tokens: int = 256
     request_id: Optional[str] = None
     start_time: Optional[float] = None  # client scheduled_wall_time for latency/TTFT/TBT
+
+
+class BatchConfigUpdate(BaseModel):
+    """Optional fields; only provided fields are updated."""
+    batch_size: Optional[int] = None
+    batch_timeout_ms: Optional[int] = None
 
 
 MODEL_A_URL = os.environ.get("MODEL_A_URL", "http://127.0.0.1:8001")
@@ -110,138 +217,60 @@ ROUTER_MODEL_PATH = os.environ.get("ROUTER_MODEL_PATH", "router_model/model_chec
 BATCH_SIZE = int(os.environ.get("ROUTER_BATCH_SIZE", "4"))  # Process up to 4 requests at once
 BATCH_TIMEOUT_MS = int(os.environ.get("ROUTER_BATCH_TIMEOUT_MS", "20"))  # Max 20ms wait for batch
 
+# Multi-router: comma-separated devices, e.g. "cuda:0,cuda:1". Prompts are randomly routed to one.
+ROUTER_MODEL_DEVICES = [d.strip() for d in os.environ.get("ROUTER_MODEL_DEVICES", "cuda:0").split(",") if d.strip()]
+if not ROUTER_MODEL_DEVICES:
+    ROUTER_MODEL_DEVICES = ["cuda:0"]
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _batch_processor_task
-
     router_model_config = RouterModelConfig()
-    print("Starting up the router...")
-    app.state.router_model = TruncatedModel.load_model_from_checkpoint(
-        model_path=ROUTER_MODEL_PATH,
-        model_name="deberta",
-        pooling_strategy="cls",
-        num_outputs=1,
-        num_classes=2,
-        router_model_config=router_model_config
-    )
     router_config = RouterConfig()
-    app.state.tokenizer = load_tokenizer(model_name=router_config.model_name)
-    app.state.metrics = RouterMetrics(slo_latency_ms=float(os.environ.get("SLO_LATENCY_MS", "5000")))
-    
-    # Start batch processor task
-    _batch_processor_task = asyncio.create_task(batch_processor())
-    print(f"Router batching enabled: batch_size={BATCH_SIZE}, timeout_ms={BATCH_TIMEOUT_MS}")
-    
+    tokenizer = load_tokenizer(model_name=router_config.model_name)
+    app.state.metrics = RouterMetrics(
+        slo_ttft_ms=float(os.environ.get("SLO_TTFT_MS", "500")),
+        slo_tbt_p95_ms=float(os.environ.get("SLO_TBT_P95_MS", "100")),
+    )
+    app.state.on_the_fly_requests = 0
+
+    backend_selectors: List[BackendSelector] = []
+    for i, device in enumerate(ROUTER_MODEL_DEVICES):
+        print(f"Loading router model {i + 1}/{len(ROUTER_MODEL_DEVICES)} on {device}...")
+        router_model = TruncatedModel.load_model_from_checkpoint(
+            model_path=ROUTER_MODEL_PATH,
+            model_name="deberta",
+            pooling_strategy="cls",
+            num_outputs=1,
+            num_classes=2,
+            router_model_config=router_model_config,
+            device=device,
+        )
+        sel = BackendSelector(
+            model=router_model,
+            tokenizer=tokenizer,
+            model_a_url=MODEL_A_URL,
+            model_b_url=MODEL_B_URL,
+            threshold=threshold,
+            batch_size=BATCH_SIZE,
+            batch_timeout_ms=BATCH_TIMEOUT_MS,
+        )
+        await sel.start()
+        backend_selectors.append(sel)
+
+    app.state.backend_selectors = backend_selectors
+    print(f"Router: {len(backend_selectors)} model(s) on devices {ROUTER_MODEL_DEVICES}, batch_size={BATCH_SIZE}, timeout_ms={BATCH_TIMEOUT_MS}")
+
     yield
-    
+
     print("Shutting down the router...")
-    # Cancel batch processor
-    if _batch_processor_task:
-        _batch_processor_task.cancel()
-        try:
-            await _batch_processor_task
-        except asyncio.CancelledError:
-            pass
+    for sel in backend_selectors:
+        await sel.stop()
 
 app = FastAPI(lifespan=lifespan)
 _request_routes: Dict[str, str] = {}
 _request_lock = asyncio.Lock()
 
-# Batching infrastructure
-_batch_queue: asyncio.Queue = asyncio.Queue()
-_batch_processor_task: Optional[asyncio.Task] = None
-
-
-def choose_backend_batched(prompts: List[str]) -> List[str]:
-    """Process a batch of prompts and return backends."""
-    import torch
-    
-    router_model = app.state.router_model
-    tokenizer = app.state.tokenizer
-    device = next(router_model.parameters()).device
-    
-    # Tokenize all prompts
-    tokenized = tokenizer(prompts, return_tensors="pt", padding=True, truncation=True)
-    input_ids = tokenized["input_ids"].to(device)
-    attention_mask = tokenized["attention_mask"].to(device)
-    
-    # Process batch
-    with torch.no_grad():
-        outputs = router_model(input_ids, attention_mask)
-    
-    # Extract scores (handle both 1D and 2D outputs)
-    if outputs.dim() == 1:
-        scores = outputs.cpu().numpy()
-    else:
-        scores = outputs.squeeze(-1).cpu().numpy()
-    
-    # Ensure scores is at least 1D
-    import numpy as np
-    scores = np.atleast_1d(scores)
-    
-    # Convert scores to backends
-    backends = [
-        MODEL_A_URL if score > threshold else MODEL_B_URL 
-        for score in scores
-    ]
-    
-    return backends
-
-
-async def batch_processor():
-    """Background task that processes batches from the queue."""
-    while True:
-        batch_items: List[Tuple[str, asyncio.Future]] = []
-        
-        try:
-            # Wait for first item (no timeout - block until at least one arrives)
-            prompt, future = await _batch_queue.get()
-            batch_items.append((prompt, future))
-            
-            # Try to collect more items up to BATCH_SIZE (with timeout for batching)
-            # Use asyncio.wait_for to wait up to BATCH_TIMEOUT_MS for additional items
-            try:
-                async def collect_additional_items():
-                    while len(batch_items) < BATCH_SIZE:
-                        prompt, future = await _batch_queue.get()
-                        batch_items.append((prompt, future))
-                
-                await asyncio.wait_for(collect_additional_items(), timeout=BATCH_TIMEOUT_MS / 1000.0)
-            except asyncio.TimeoutError:
-                # Timeout expired, process what we have
-                pass
-        except Exception as e:
-            # Handle unexpected errors in queue operations
-            print(f"Error in batch processor queue: {e}")
-            continue
-        
-        # Process the batch
-        try:
-            prompts = [item[0] for item in batch_items]
-            backends = choose_backend_batched(prompts)
-            
-            # Set results for all futures
-            for (_, future), backend in zip(batch_items, backends):
-                if not future.done():
-                    future.set_result(backend)
-        except Exception as e:
-            # Set exception for all futures if batch processing fails
-            print(f"Error processing batch: {e}")
-            for _, future in batch_items:
-                if not future.done():
-                    future.set_exception(e)
-
-
-async def choose_backend(prompt: str) -> str:
-    """Choose backend for a prompt using batched inference."""
-    # Create a future for this request
-    future = asyncio.Future()
-    
-    # Add to batch queue
-    await _batch_queue.put((prompt, future))
-    
-    # Wait for result
-    return await future
 
 @app.post("/generate")
 async def generate(req: GenerateRequest, request: Request):
@@ -251,13 +280,15 @@ async def generate(req: GenerateRequest, request: Request):
     payload = req.model_dump(exclude={"start_time"})
     payload["request_id"] = request_id
     payload["start_time"] = request_start
-
-    backend = await choose_backend(payload["prompt"])
-    time_to_choose_backend = time.time() - request_start
+    loop = asyncio.get_running_loop()
+    router_start_time = loop.time()
+    selector = random.choice(app.state.backend_selectors)
+    backend = await selector.choose_backend(payload["prompt"])
+    time_to_choose_backend = loop.time() - router_start_time
 
     async with _request_lock:
         _request_routes[request_id] = backend
-
+        app.state.on_the_fly_requests += 1
     try:
         async with httpx.AsyncClient(timeout=None) as client:
             resp = await client.post(f"{backend}/generate", json=payload)
@@ -278,7 +309,9 @@ async def generate(req: GenerateRequest, request: Request):
             app.state.metrics.record_request(
                 latency_ms=latency_ms,
                 backend=backend,
-                success=True
+                success=True,
+                ttft_ms=ttft_ms,
+                time_between_tokens_ms=time_between_tokens_ms,
             )
 
             return JSONResponse(content={
@@ -297,13 +330,13 @@ async def generate(req: GenerateRequest, request: Request):
         app.state.metrics.record_request(
             latency_ms=latency_ms,
             backend=backend,
-            success=False
+            success=False,
         )
         raise
     finally:
         async with _request_lock:
             _request_routes.pop(request_id, None)
-
+        app.state.on_the_fly_requests -= 1
 @app.post("/abort")
 async def abort(req: dict):
     request_id = req.get("request_id")
@@ -328,7 +361,55 @@ async def abort_request(request_id: str) -> bool:
 
 
 @app.get("/metrics")
-async def get_metrics():
-    """Get system-level goodput metrics."""
+async def get_metrics(detail: str = "full"):
+    """Get system-level goodput metrics.
+
+    detail: "full" returns ttfts_ms, tbt_lists_ms, chosen_backends as lists;
+            "summary" returns avg_ttft_ms, avg_tbt_ms, backend_counts instead.
+    """
     metrics: RouterMetrics = app.state.metrics
-    return JSONResponse(content=metrics.get_metrics_dict())
+    if detail not in ("full", "summary"):
+        return JSONResponse(
+            {"error": "detail must be 'full' or 'summary'"},
+            status_code=400,
+        )
+    return JSONResponse(content=metrics.get_metrics_dict(detail=detail))
+
+
+@app.get("/config")
+async def get_config():
+    """Get current router batch config."""
+    selectors: List[BackendSelector] = app.state.backend_selectors
+    sel = selectors[0]
+    return JSONResponse(content={
+        "batch_size": sel.batch_size,
+        "batch_timeout_ms": sel.batch_timeout_ms,
+        "router_model_devices": ROUTER_MODEL_DEVICES,
+        "num_router_models": len(selectors),
+    })
+
+
+@app.patch("/config")
+async def update_config(req: BatchConfigUpdate):
+    """Update router batch config at runtime. Takes effect on next batch cycle."""
+    if req.batch_size is not None and not 1 <= req.batch_size <= 64:
+        return JSONResponse(
+            {"error": "batch_size must be between 1 and 64"},
+            status_code=400,
+        )
+    if req.batch_timeout_ms is not None and not 1 <= req.batch_timeout_ms <= 2000:
+        return JSONResponse(
+            {"error": "batch_timeout_ms must be between 1 and 2000"},
+            status_code=400,
+        )
+    selectors: List[BackendSelector] = app.state.backend_selectors
+    for sel in selectors:
+        if req.batch_size is not None:
+            sel.batch_size = req.batch_size
+        if req.batch_timeout_ms is not None:
+            sel.batch_timeout_ms = req.batch_timeout_ms
+    sel = selectors[0]
+    return JSONResponse(content={
+        "batch_size": sel.batch_size,
+        "batch_timeout_ms": sel.batch_timeout_ms,
+    })

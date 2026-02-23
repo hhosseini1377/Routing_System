@@ -31,24 +31,38 @@ import numpy as np
 
 
 def load_prompts(prompts_path: Optional[str] = None, num_prompts: int = 50000) -> List[str]:
-    """Load prompts from pickle (list of str or list of dict with prompt/text). Default prompts if missing."""
+    """Load prompts from pickle (list of str, list of dict, or pandas DataFrame). Default prompts if missing."""
     if prompts_path and Path(prompts_path).exists():
         import pickle
         with open(prompts_path, "rb") as f:
             data = pickle.load(f)
-        if not data:
+        # Avoid "truth value of DataFrame is ambiguous"
+        if data is None:
             return _default_prompts(num_prompts)
-        first = data[0]
-        if isinstance(first, str):
-            prompts = list(data)[:num_prompts]
-        elif isinstance(first, dict):
-            prompts = []
-            for item in data[:num_prompts]:
-                p = item.get("prompt") or item.get("text") or item.get("content")
-                if p is not None:
-                    prompts.append(p if isinstance(p, str) else str(p))
+        if hasattr(data, "empty") and data.empty:
+            return _default_prompts(num_prompts)
+        if isinstance(data, (list, tuple)) and len(data) == 0:
+            return _default_prompts(num_prompts)
+        # Handle pandas DataFrame
+        if hasattr(data, "columns") and hasattr(data, "iloc"):
+            for col in ("prompt", "text", "content", "article", "prompts"):
+                if col in data.columns:
+                    prompts = data[col].astype(str).tolist()[:num_prompts]
+                    break
+            else:
+                return _default_prompts(num_prompts)
         else:
-            prompts = _default_prompts(num_prompts)
+            first = data[0]
+            if isinstance(first, str):
+                prompts = list(data)[:num_prompts]
+            elif isinstance(first, dict):
+                prompts = []
+                for item in data[:num_prompts]:
+                    p = item.get("prompt") or item.get("text") or item.get("content")
+                    if p is not None:
+                        prompts.append(p if isinstance(p, str) else str(p))
+            else:
+                prompts = _default_prompts(num_prompts)
         return prompts if prompts else _default_prompts(num_prompts)
     return _default_prompts(num_prompts)
 
@@ -132,10 +146,13 @@ async def generate_load(
     completion_timeout_sec: Optional[float] = None,
     max_concurrency: int = 100,
     max_pending_multiplier: int = 10,
+    arrival_process: str = "exponential",
 ) -> Tuple[List[Dict], List[float], bool]:
     """
     Open-loop load at target_rps for duration_sec. Returns (results, request_times, completion_timed_out).
     Timed-out requests are appended to results with state "timed_out".
+
+    arrival_process: "exponential" (Poisson, inter-arrival ~ Exp(1/target_rps)) or "uniform" (equal spacing).
     """
     if target_rps <= 0:
         return [], [], False
@@ -151,8 +168,14 @@ async def generate_load(
     wall_start = time.time()
     prompt_idx = 0
     sent_count = 0
+    # Next scheduled arrival time (seconds from loop_start). For exponential: cumulative sum of Exp(1/target_rps).
+    next_arrival_elapsed = 0.0
 
-    async with httpx.AsyncClient(timeout=request_timeout_sec) as client:
+    # httpx defaults to max_connections=100. At target_rps with multi-second
+    # latencies we exceed that; requests queue waiting for a connection before
+    # being sent, inflating "time to reach router". Raise limit to avoid queueing.
+    limits = httpx.Limits(max_connections=max(500, int(target_rps * 20)))
+    async with httpx.AsyncClient(timeout=request_timeout_sec, limits=limits) as client:
 
         async def bounded_send(prompt: str, scheduled_wall_time: float):
             r = await send_request(client, router_url, prompt, scheduled_wall_time, request_timeout_sec)
@@ -160,15 +183,19 @@ async def generate_load(
 
         while loop.time() - loop_start < duration_sec:
             elapsed = loop.time() - loop_start
-            next_arrival_elapsed = sent_count / target_rps
             if elapsed >= next_arrival_elapsed:
                 prompt = prompts[prompt_idx % len(prompts)]
                 prompt_idx += 1
                 sent_count += 1
-                scheduled_wall_time = wall_start + next_arrival_elapsed
+                scheduled_wall_time = time.time()
                 request_times.append(scheduled_wall_time)
                 task = asyncio.create_task(bounded_send(prompt, scheduled_wall_time))
                 task_infos.append((task, scheduled_wall_time, prompt))
+                # Schedule next arrival
+                if arrival_process == "exponential":
+                    next_arrival_elapsed += float(np.random.exponential(scale=1.0 / target_rps))
+                else:
+                    next_arrival_elapsed = sent_count / target_rps
                 if len(task_infos) >= max_pending:
                     tasks_only = [t for t, _, _ in task_infos]
                     _, pending_set = await asyncio.wait(tasks_only, return_when=asyncio.FIRST_COMPLETED)
@@ -312,7 +339,8 @@ async def main():
     parser.add_argument("--request-timeout-sec", type=float, default=120.0, help="Per-request HTTP timeout")
     parser.add_argument("--completion-timeout-sec", type=float, default=None, help="Max wait for in-flight requests after send phase (default: duration*3)")
     parser.add_argument("--max-concurrency", type=int, default=100, help="Max concurrent requests")
-    parser.add_argument("--save-results", action="store_true", help="Save full per-request results in JSON (can be large)")
+    parser.add_argument("--arrival-process", type=str, default="exponential", choices=["exponential", "uniform"],
+                        help="Inter-arrival distribution: exponential (Poisson) or uniform (equal spacing)")
     args = parser.parse_args()
 
     completion_timeout = args.completion_timeout_sec
@@ -324,7 +352,7 @@ async def main():
     prompts = load_prompts(args.prompts_path, num_prompts=num_prompts_needed)
     print(f"  Loaded {len(prompts)} prompts")
 
-    print(f"Sending load to {args.router_url} at {args.load_rps} RPS for {args.duration}s...")
+    print(f"Sending load to {args.router_url} at {args.load_rps} RPS for {args.duration}s (arrival: {args.arrival_process})...")
     results, request_times, completion_timed_out = await generate_load(
         router_url=args.router_url,
         target_rps=args.load_rps,
@@ -333,10 +361,28 @@ async def main():
         request_timeout_sec=args.request_timeout_sec,
         completion_timeout_sec=completion_timeout,
         max_concurrency=args.max_concurrency,
+        arrival_process=args.arrival_process,
     )
 
     stats = compute_statistics(results, request_times)
     stats["completion_timed_out"] = completion_timed_out
+
+    # Same format as collect_performance_data: ttfts_ms and tbt_lists_ms (no prompts)
+    successful = [r for r in results if r.get("success", False)]
+    ttfts_ms = [r["ttft_ms"] for r in successful if r.get("ttft_ms") is not None]
+    tbt_lists_ms = [r["time_between_tokens_ms"] for r in successful if r.get("time_between_tokens_ms")]
+
+    # List of results: one element per request (per prompt), with ttft_ms, tbts_ms, backend, latency_ms, time_to_choose_backend_ms
+    results_list = [
+        {
+            "ttft_ms": r.get("ttft_ms"),
+            "tbts_ms": r.get("time_between_tokens_ms"),  # list of TBTs in ms, or null
+            "backend": r.get("backend"),
+            "latency_ms": r.get("latency_ms"),
+            "time_to_choose_backend_ms": r.get("time_to_choose_backend_ms"),
+        }
+        for r in results
+    ]
 
     payload = {
         "config": {
@@ -345,11 +391,13 @@ async def main():
             "duration_sec": args.duration,
             "request_timeout_sec": args.request_timeout_sec,
             "completion_timeout_sec": completion_timeout,
+            "arrival_process": args.arrival_process,
         },
         "performance": _to_native(stats),
+        "ttfts_ms": _to_native(ttfts_ms),
+        "tbt_lists_ms": _to_native(tbt_lists_ms),
+        "results": _to_native(results_list),
     }
-    if args.save_results:
-        payload["results"] = _to_native(results)
 
     out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)

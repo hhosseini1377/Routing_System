@@ -23,6 +23,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
+from tqdm import tqdm
 
 # Add project root for imports
 _ROOT = Path(__file__).resolve().parents[1]
@@ -34,26 +35,93 @@ from router_model.config import RouterModelConfig
 from config import RouterConfig
 
 
+def format_cnn_dailymail_prompt_qwen(
+    article_text: str,
+    use_chatml: bool = True,
+    use_no_think: bool = True
+) -> str:
+    """
+    Format a CNN/DailyMail article into a Qwen-style prompt for summarization.
+
+    Args:
+        article_text: The article text to summarize
+        use_chatml: Whether to use ChatML format (default: True for Qwen models)
+        use_no_think: Whether to use /no_think command to disable thinking mode (default: True)
+
+    Returns:
+        Formatted prompt string
+    """
+    user_content = (
+        "Summarize the following article in a few sentences, focusing on the main points.\n\n"
+        f"Article:\n{article_text}\n\n"
+        "Summary:\n"
+    )
+
+    if use_chatml:
+        if use_no_think:
+            system_instruction = (
+                "/no_think You are a helpful assistant that provides concise and accurate summaries "
+                "of news articles. Output only the summary without any reasoning or explanation."
+            )
+        else:
+            system_instruction = (
+                "You are a helpful assistant that provides concise and accurate summaries "
+                "of news articles. Output only the summary without any reasoning or explanation."
+            )
+
+        prompt = (
+            "<|im_start|>system\n"
+            f"{system_instruction}\n"
+            "<|im_end|>\n"
+            "<|im_start|>user\n"
+            f"{user_content}"
+            "<|im_end|>\n"
+            "<|im_start|>assistant\n"
+        )
+    else:
+        prompt = user_content
+
+    return prompt
+
+
 def load_prompts_from_pkl(path: str, max_prompts: int = None):
     """
     Load prompts from a pickle file.
-    Supports: list of str, or list of dict with 'prompt' or 'text' key.
+    Supports: list of str, list of dict with 'prompt'/'text'/'content', or pandas DataFrame.
     """
     with open(path, "rb") as f:
         data = pickle.load(f)
-    if not data:
+    # Avoid "truth value of DataFrame is ambiguous" - use explicit checks
+    if data is None:
         return []
-    first = data[0]
-    if isinstance(first, str):
-        prompts = list(data)
-    elif isinstance(first, dict):
-        prompts = []
-        for item in data:
-            p = item.get("prompt") or item.get("text") or item.get("content")
-            if p is not None:
-                prompts.append(p if isinstance(p, str) else str(p))
+    if hasattr(data, "empty") and data.empty:
+        return []
+    if isinstance(data, (list, tuple)) and len(data) == 0:
+        return []
+
+    # Handle pandas DataFrame
+    if hasattr(data, "columns") and hasattr(data, "iloc"):
+        for col in ("prompt", "text", "content", "article", "prompts"):
+            if col in data.columns:
+                prompts = data[col].astype(str).tolist()
+                break
+        else:
+            raise ValueError(
+                f"DataFrame has no 'prompt', 'text', 'content', or 'article' column. "
+                f"Columns: {list(data.columns)}"
+            )
     else:
-        raise ValueError(f"Unsupported pkl format: list of {type(first)}")
+        first = data[0]
+        if isinstance(first, str):
+            prompts = list(data)
+        elif isinstance(first, dict):
+            prompts = []
+            for item in data:
+                p = item.get("prompt") or item.get("text") or item.get("content")
+                if p is not None:
+                    prompts.append(p if isinstance(p, str) else str(p))
+        else:
+            raise ValueError(f"Unsupported pkl format: list of {type(first)}")
     if max_prompts is not None:
         prompts = prompts[:max_prompts]
     return prompts
@@ -62,7 +130,7 @@ def load_prompts_from_pkl(path: str, max_prompts: int = None):
 def get_quality_scores(model, tokenizer, prompts: list[str], batch_size: int, device: torch.device) -> np.ndarray:
     """Run prompts through the router model in batches; return 1D array of scores."""
     all_scores = []
-    for i in range(0, len(prompts), batch_size):
+    for i in tqdm(range(0, len(prompts), batch_size)):
         batch = prompts[i : i + batch_size]
         tokenized = tokenizer(
             batch,
@@ -160,6 +228,21 @@ def main():
         default=None,
         help="Optional path to save (index, score) or full (prompt, score) as JSON for analysis",
     )
+    parser.add_argument(
+        "--format-cnn-dailymail",
+        action="store_true",
+        help="Format each loaded prompt as CNN/DailyMail Qwen summarization prompt (ChatML + /no_think)",
+    )
+    parser.add_argument(
+        "--no-chatml",
+        action="store_true",
+        help="When using --format-cnn-dailymail, use plain text instead of ChatML (default: ChatML)",
+    )
+    parser.add_argument(
+        "--no-no-think",
+        action="store_true",
+        help="When using --format-cnn-dailymail, do not add /no_think to system instruction",
+    )
     args = parser.parse_args()
 
     model_path = args.model_path or __import__("os").environ.get(
@@ -183,6 +266,17 @@ def main():
     print("Loading prompts...")
     prompts = load_prompts_from_pkl(str(dataset_path), max_prompts=args.max_prompts)
     print(f"  Loaded {len(prompts)} prompts")
+
+    if args.format_cnn_dailymail:
+        prompts = [
+            format_cnn_dailymail_prompt_qwen(
+                p,
+                use_chatml=not args.no_chatml,
+                use_no_think=not args.no_no_think,
+            )
+            for p in prompts
+        ]
+        print("  Applied CNN/DailyMail Qwen format to all prompts")
 
     print("Loading router model...")
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")

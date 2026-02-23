@@ -23,7 +23,7 @@ python -m profiler.collect_performance_data \
     --thread-range 10 100 \
     --thread-steps 10 \
     --load-range 1 13 \
-    --load-steps 10 \
+    --load-steps 13 \
     --warmup-duration 10 \
     --test-duration 60 \
     --completion-timeout-sec 60 \
