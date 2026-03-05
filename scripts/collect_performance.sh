@@ -16,18 +16,20 @@ if ! "${ROOT_DIR}/scripts/start_mps.sh"; then
 fi
 
 python -m profiler.collect_performance_data \
-    --model-name "Qwen/Qwen3-14B" \
-    --output performance_data.json \
-    --memory-range 0.6 0.6 \
+    --model-name "01-ai/Yi-34B-Chat" \
+    --output performance_data_yi34b.json \
+    --prompts-path datasets/routerbench_0shot_prompts.pkl \
+    --memory-range 0.85 0.85 \
     --memory-steps 1 \
     --thread-range 10 100 \
     --thread-steps 10 \
-    --load-range 1 13 \
-    --load-steps 13 \
+    --load-range 1 20 \
+    --load-steps 10 \
     --warmup-duration 10 \
     --test-duration 60 \
-    --completion-timeout-sec 60 \
+    --completion-timeout-sec 5 \
     --request-timeout-sec 120 \
+    --tensor-parallel-sizes 1 2 \
 #    --max-num-seqs-range 256 1024 --max-num-seqs-steps 4 \
 #    --max-num-batched-tokens-range 2048 8192 --max-num-batched-tokens-steps 4 \
 

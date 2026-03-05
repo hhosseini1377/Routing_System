@@ -29,7 +29,7 @@ cleanup() {
     done
     
     # Kill processes listening on the service ports (safety measure)
-    local ports=("${ROUTER_PORT}" "${UVICORN_MODEL_A_PORT}" "${UVICORN_MODEL_B_PORT}")
+    local ports=("${ROUTER_PORT}" "${UVICORN_MODEL_A_PORT}" "${UVICORN_MODEL_B_PORT}" "${UVICORN_MODEL_C_PORT}")
     for port in "${ports[@]}"; do
         local port_pids
         port_pids=$(get_port_pids "$port")
@@ -165,6 +165,8 @@ start_service() {
 # Router (optionally restrict GPUs via ROUTER_CUDA_VISIBLE_DEVICES)
 ROUTER_ENV="MODEL_A_URL=\"http://127.0.0.1:${UVICORN_MODEL_A_PORT}\" \
 MODEL_B_URL=\"http://127.0.0.1:${UVICORN_MODEL_B_PORT}\" \
+MODEL_C_URL=\"http://127.0.0.1:${UVICORN_MODEL_C_PORT}\" \
+ROUTER_MODEL_PATH=${ROUTER_MODEL_PATH:-router_model/model_checkpoints/multi_head_regression_best.pth} \
 ROUTER_BATCH_SIZE=${ROUTER_BATCH_SIZE} \
 ROUTER_BATCH_TIMEOUT_MS=${ROUTER_BATCH_TIMEOUT_MS} \
 ROUTER_MODEL_DEVICES=\"${ROUTER_MODEL_DEVICES}\" \
@@ -213,13 +215,31 @@ if ! start_service "Model B" "$MODEL_B_CMD" "${UVICORN_MODEL_B_PORT}"; then
 fi
 PID_B="${PIDS[-1]}"
 
+# Start model C (Third Model)
+MODEL_C_CMD="CUDA_VISIBLE_DEVICES=${MODEL_C_CUDA_VISIBLE_DEVICES} \
+CUDA_MPS_ACTIVE_THREAD_PERCENTAGE=${MODEL_C_ACTIVE_THREAD_PERCENTAGE} \
+MODEL_NAME=\"${MODEL_C_NAME}\" \
+TENSOR_PARALLEL_SIZE=${MODEL_C_TENSOR_PARALLEL_SIZE} \
+PIPELINE_PARALLEL_SIZE=${MODEL_C_PIPELINE_PARALLEL_SIZE} \
+GPU_MEMORY_UTILIZATION=${MODEL_C_GPU_MEMORY_UTILIZATION} \
+MAX_MODEL_LEN=${MODEL_C_MAX_LEN} \
+UVICORN_PORT=${UVICORN_MODEL_C_PORT} \
+uvicorn servers.model_server:app --host 0.0.0.0 --port ${UVICORN_MODEL_C_PORT}"
+
+if ! start_service "Model C" "$MODEL_C_CMD" "${UVICORN_MODEL_C_PORT}"; then
+    echo "ERROR: Failed to start Model C" >&2
+    exit 1
+fi
+PID_C="${PIDS[-1]}"
+
 echo "All services started:"
 echo "  Router on :${ROUTER_PORT} (PID: $PID_ROUTER)"
 echo "  Model A (${MODEL_A_NAME}) on :${UVICORN_MODEL_A_PORT} (PID: $PID_A)"
 echo "  Model B (${MODEL_B_NAME}) on :${UVICORN_MODEL_B_PORT} (PID: $PID_B)"
+echo "  Model C (${MODEL_C_NAME}) on :${UVICORN_MODEL_C_PORT} (PID: $PID_C)"
 
 # Wait for any process to exit and identify which one
-wait -n "${PID_A}" "${PID_B}" "${PID_ROUTER}"
+wait -n "${PID_A}" "${PID_B}" "${PID_C}" "${PID_ROUTER}"
 exit_code=$?
 
 # Identify which process exited

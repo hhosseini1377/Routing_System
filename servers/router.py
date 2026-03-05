@@ -13,10 +13,9 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
-from router_model.regression_models import TruncatedModel, load_tokenizer
-from router_model.config import RouterModelConfig
-from config import RouterConfig
-from .backend_selector import BackendSelector
+from router_model.train_multi_head_regression import load_multi_head_model
+from transformers import AutoTokenizer
+from .multi_head_backend_selector import MultiHeadBackendSelector
 import time
 
 def format_sse(data: str) -> str:
@@ -26,19 +25,17 @@ def format_sse(data: str) -> str:
 def _meets_slo(
     success: bool,
     ttft_ms: Optional[float],
-    tbt_list_ms: List[float],
+    tpot_ms: Optional[float],
     slo_ttft_ms: float,
     slo_tbt_p95_ms: float,
 ) -> bool:
-    """Request meets SLO if: success AND TTFT < threshold AND p95(TBTs) < threshold."""
+    """Request meets SLO if: success AND TTFT < threshold AND TPOT (avg TBT) < threshold."""
     if not success:
         return False
     if ttft_ms is None or ttft_ms >= slo_ttft_ms:
         return False
-    if tbt_list_ms:
-        p95_tbt = float(np.percentile(tbt_list_ms, 95))
-        if p95_tbt >= slo_tbt_p95_ms:
-            return False
+    if tpot_ms is not None and tpot_ms >= slo_tbt_p95_ms:
+        return False
     return True
 
 
@@ -63,7 +60,7 @@ class RouterMetrics:
         self.request_outcomes = deque(maxlen=window_size)  # success/failure
         self.request_times = deque(maxlen=window_size)  # timestamps
         self.ttfts_ms = deque(maxlen=window_size)  # TTFT in ms per request (None if failed)
-        self.tbt_lists_ms = deque(maxlen=window_size)  # list of TBT lists per request
+        self.tpot_ms_list: deque = deque(maxlen=window_size)  # TPOT (avg TBT) per request
         self.start_time = time.time()
 
     def record_request(
@@ -73,13 +70,18 @@ class RouterMetrics:
         success: bool,
         ttft_ms: Optional[float] = None,
         time_between_tokens_ms: Optional[List[float]] = None,
+        tpot_ms: Optional[float] = None,
     ):
         self.request_latencies.append(latency_ms)
         self.request_backends.append(backend)
         self.request_outcomes.append(success)
         self.request_times.append(time.time())
         self.ttfts_ms.append(ttft_ms if success else None)
-        self.tbt_lists_ms.append(time_between_tokens_ms if success else [])
+        if success and (tpot_ms is not None or time_between_tokens_ms):
+            val = tpot_ms if tpot_ms is not None else (sum(time_between_tokens_ms) / len(time_between_tokens_ms))
+            self.tpot_ms_list.append(val)
+        else:
+            self.tpot_ms_list.append(None)
 
     def get_goodput(self) -> float:
         """Goodput = throughput * SLO attainment rate (SLO-compliant RPS)."""
@@ -89,12 +91,12 @@ class RouterMetrics:
             _meets_slo(
                 outcome,
                 ttft,
-                list(tbts) if tbts else [],
+                tpot,
                 self.slo_ttft_ms,
                 self.slo_tbt_p95_ms,
             )
-            for outcome, ttft, tbts in zip(
-                self.request_outcomes, self.ttfts_ms, self.tbt_lists_ms
+            for outcome, ttft, tpot in zip(
+                self.request_outcomes, self.ttfts_ms, self.tpot_ms_list
             )
         )
         slo_attainment_rate = slo_compliant / len(self.request_outcomes)
@@ -108,7 +110,7 @@ class RouterMetrics:
     def get_metrics_dict(self, detail: str = "full") -> dict:
         """Return aggregated system metrics.
 
-        detail: "full" returns ttfts_ms, tbt_lists_ms, chosen_backends as lists;
+        detail: "full" returns ttfts_ms, tpot_ms_list, chosen_backends as lists;
                 "summary" returns avg_ttft_ms, avg_tbt_ms, backend_counts instead.
         """
         if not self.request_outcomes:
@@ -126,7 +128,7 @@ class RouterMetrics:
             }
             if detail == "full":
                 empty["ttfts_ms"] = []
-                empty["tbt_lists_ms"] = []
+                empty["tpot_ms_list"] = []
                 empty["chosen_backends"] = []
             else:
                 empty["avg_ttft_ms"] = 0.0
@@ -139,20 +141,22 @@ class RouterMetrics:
             _meets_slo(
                 outcome,
                 ttft,
-                list(tbts) if tbts else [],
+                tpot,
                 self.slo_ttft_ms,
                 self.slo_tbt_p95_ms,
             )
-            for outcome, ttft, tbts in zip(
-                self.request_outcomes, self.ttfts_ms, self.tbt_lists_ms
+            for outcome, ttft, tpot in zip(
+                self.request_outcomes, self.ttfts_ms, self.tpot_ms_list
             )
         )
         slo_attainment_rate = slo_compliant / len(self.request_outcomes)
         avg_latency = sum(self.request_latencies) / len(self.request_latencies)
 
         # Count by backend
-        backend_a_count = sum(1 for b in self.request_backends if "8001" in b)
-        backend_b_count = sum(1 for b in self.request_backends if "8002" in b)
+        backend_counts = {
+            b: sum(1 for x in self.request_backends if x == b)
+            for b in set(self.request_backends)
+        }
 
         if self.request_times:
             time_span = self.request_times[-1] - self.request_times[0]
@@ -172,21 +176,20 @@ class RouterMetrics:
             "slo_ttft_ms": self.slo_ttft_ms,
             "slo_tbt_p95_ms": self.slo_tbt_p95_ms,
             "avg_latency_ms": avg_latency,
-            "backend_a_routed": backend_a_count,
-            "backend_b_routed": backend_b_count,
+            "backend_counts": backend_counts,
             "uptime_sec": time.time() - self.start_time,
             "timestamp": time.time(),
         }
 
         if detail == "full":
             result["ttfts_ms"] = list(self.ttfts_ms)
-            result["tbt_lists_ms"] = [list(tbts) for tbts in self.tbt_lists_ms]
+            result["tpot_ms_list"] = list(self.tpot_ms_list)
             result["chosen_backends"] = list(self.request_backends)
         else:
             ttfts_valid = [t for t in self.ttfts_ms if t is not None]
             result["avg_ttft_ms"] = sum(ttfts_valid) / len(ttfts_valid) if ttfts_valid else 0.0
-            all_tbts = [tbt for tbts in self.tbt_lists_ms for tbt in tbts]
-            result["avg_tbt_ms"] = sum(all_tbts) / len(all_tbts) if all_tbts else 0.0
+            tpots_valid = [t for t in self.tpot_ms_list if t is not None]
+            result["avg_tbt_ms"] = sum(tpots_valid) / len(tpots_valid) if tpots_valid else 0.0
             result["backend_counts"] = dict(
                 (b, sum(1 for x in self.request_backends if x == b))
                 for b in set(self.request_backends)
@@ -210,8 +213,11 @@ class BatchConfigUpdate(BaseModel):
 
 MODEL_A_URL = os.environ.get("MODEL_A_URL", "http://127.0.0.1:8001")
 MODEL_B_URL = os.environ.get("MODEL_B_URL", "http://127.0.0.1:8002")
-threshold = 0.5
-ROUTER_MODEL_PATH = os.environ.get("ROUTER_MODEL_PATH", "router_model/model_checkpoints/model_deberta_20260101-163459.pth")
+MODEL_C_URL = os.environ.get("MODEL_C_URL", "http://127.0.0.1:8003")
+MODEL_URLS = [MODEL_A_URL, MODEL_B_URL, MODEL_C_URL]
+ROUTER_MODEL_PATH = os.environ.get(
+    "ROUTER_MODEL_PATH", "router_model/model_checkpoints/multi_head_regression_best.pth"
+)
 
 # Batching configuration
 BATCH_SIZE = int(os.environ.get("ROUTER_BATCH_SIZE", "4"))  # Process up to 4 requests at once
@@ -225,33 +231,25 @@ if not ROUTER_MODEL_DEVICES:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    router_model_config = RouterModelConfig()
-    router_config = RouterConfig()
-    tokenizer = load_tokenizer(model_name=router_config.model_name)
     app.state.metrics = RouterMetrics(
         slo_ttft_ms=float(os.environ.get("SLO_TTFT_MS", "500")),
         slo_tbt_p95_ms=float(os.environ.get("SLO_TBT_P95_MS", "100")),
     )
     app.state.on_the_fly_requests = 0
 
-    backend_selectors: List[BackendSelector] = []
+    tokenizer = AutoTokenizer.from_pretrained(
+        "microsoft/deberta-v3-large",
+        truncation_side="left",
+    )
+
+    backend_selectors: List[MultiHeadBackendSelector] = []
     for i, device in enumerate(ROUTER_MODEL_DEVICES):
-        print(f"Loading router model {i + 1}/{len(ROUTER_MODEL_DEVICES)} on {device}...")
-        router_model = TruncatedModel.load_model_from_checkpoint(
-            model_path=ROUTER_MODEL_PATH,
-            model_name="deberta",
-            pooling_strategy="cls",
-            num_outputs=1,
-            num_classes=2,
-            router_model_config=router_model_config,
-            device=device,
-        )
-        sel = BackendSelector(
+        print(f"Loading multi-head router model {i + 1}/{len(ROUTER_MODEL_DEVICES)} on {device}...")
+        router_model, _ = load_multi_head_model(ROUTER_MODEL_PATH, device=str(device))
+        sel = MultiHeadBackendSelector(
             model=router_model,
             tokenizer=tokenizer,
-            model_a_url=MODEL_A_URL,
-            model_b_url=MODEL_B_URL,
-            threshold=threshold,
+            model_urls=MODEL_URLS,
             batch_size=BATCH_SIZE,
             batch_timeout_ms=BATCH_TIMEOUT_MS,
         )
@@ -259,7 +257,10 @@ async def lifespan(app: FastAPI):
         backend_selectors.append(sel)
 
     app.state.backend_selectors = backend_selectors
-    print(f"Router: {len(backend_selectors)} model(s) on devices {ROUTER_MODEL_DEVICES}, batch_size={BATCH_SIZE}, timeout_ms={BATCH_TIMEOUT_MS}")
+    print(
+        f"Multi-head router: {len(backend_selectors)} model(s) on devices {ROUTER_MODEL_DEVICES}, "
+        f"3 backends {MODEL_URLS}, batch_size={BATCH_SIZE}, timeout_ms={BATCH_TIMEOUT_MS}"
+    )
 
     yield
 
@@ -298,8 +299,11 @@ async def generate(req: GenerateRequest, request: Request):
             response_text = resp_data.get("response_text", "")
             ttft = resp_data.get("TTFT", 0.0)
             time_between_tokens_ms = resp_data.get("time_between_tokens_ms", [])
+            tpot_ms = resp_data.get("tpot_ms")
+            if tpot_ms is None and time_between_tokens_ms:
+                tpot_ms = sum(time_between_tokens_ms) / len(time_between_tokens_ms)
             avg_time_between_tokens = resp_data.get("avg_time_between_tokens") or (
-                (sum(time_between_tokens_ms) / len(time_between_tokens_ms) / 1000.0) if time_between_tokens_ms else 0.0
+                (tpot_ms / 1000.0) if tpot_ms is not None else 0.0
             )
             # End-to-end latency from scheduled_wall_time (request_start) to response received
             latency_sec = time.time() - request_start
@@ -312,6 +316,7 @@ async def generate(req: GenerateRequest, request: Request):
                 success=True,
                 ttft_ms=ttft_ms,
                 time_between_tokens_ms=time_between_tokens_ms,
+                tpot_ms=tpot_ms,
             )
 
             return JSONResponse(content={
@@ -320,6 +325,7 @@ async def generate(req: GenerateRequest, request: Request):
                 "time_to_choose_backend": time_to_choose_backend,
                 "TTFT": ttft,
                 "TTFT_ms": ttft_ms,
+                "tpot_ms": tpot_ms,
                 "avg_time_between_tokens": avg_time_between_tokens,
                 "time_between_tokens_ms": time_between_tokens_ms,
                 "latency_sec": latency_sec,
@@ -379,7 +385,7 @@ async def get_metrics(detail: str = "full"):
 @app.get("/config")
 async def get_config():
     """Get current router batch config."""
-    selectors: List[BackendSelector] = app.state.backend_selectors
+    selectors: List[MultiHeadBackendSelector] = app.state.backend_selectors
     sel = selectors[0]
     return JSONResponse(content={
         "batch_size": sel.batch_size,
@@ -402,7 +408,7 @@ async def update_config(req: BatchConfigUpdate):
             {"error": "batch_timeout_ms must be between 1 and 2000"},
             status_code=400,
         )
-    selectors: List[BackendSelector] = app.state.backend_selectors
+    selectors: List[MultiHeadBackendSelector] = app.state.backend_selectors
     for sel in selectors:
         if req.batch_size is not None:
             sel.batch_size = req.batch_size

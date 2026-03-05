@@ -111,6 +111,9 @@ async def send_request(
         backend = data.get("backend", "")
         time_to_choose_backend_sec = data.get("time_to_choose_backend", 0.0)
         time_between_tokens_ms = data.get("time_between_tokens_ms")
+        tpot_ms = data.get("tpot_ms")
+        if tpot_ms is None and time_between_tokens_ms:
+            tpot_ms = sum(time_between_tokens_ms) / len(time_between_tokens_ms)
         return {
             "success": True,
             "state": "done",
@@ -118,7 +121,7 @@ async def send_request(
             "ttft_ms": float(ttft_ms),
             "backend": backend,
             "time_to_choose_backend_ms": time_to_choose_backend_sec * 1000,
-            "time_between_tokens_ms": time_between_tokens_ms,
+            "tpot_ms": float(tpot_ms) if tpot_ms is not None else None,
             "scheduled_time": scheduled_wall_time,
             "prompt": prompt,
         }
@@ -295,16 +298,12 @@ def compute_statistics(results: List[Dict], request_times: List[float]) -> Dict:
     if choose_times:
         out["avg_time_to_choose_backend_ms"] = float(np.mean(choose_times))
 
-    all_tbts = []
-    for r in successful:
-        tbt_list = r.get("time_between_tokens_ms")
-        if tbt_list:
-            all_tbts.extend(tbt_list)
-    if all_tbts:
-        all_tbts_sorted = sorted(all_tbts)
-        out["avg_tbt_ms"] = float(np.mean(all_tbts))
-        out["p50_tbt_ms"] = float(all_tbts_sorted[len(all_tbts_sorted) // 2])
-        out["p99_tbt_ms"] = float(all_tbts_sorted[min(int(len(all_tbts_sorted) * 0.99), len(all_tbts_sorted) - 1)])
+    tpots = [r["tpot_ms"] for r in successful if r.get("tpot_ms") is not None]
+    if tpots:
+        tpots_sorted = sorted(tpots)
+        out["avg_tbt_ms"] = float(np.mean(tpots))
+        out["p50_tbt_ms"] = float(tpots_sorted[len(tpots_sorted) // 2])
+        out["p99_tbt_ms"] = float(tpots_sorted[min(int(len(tpots_sorted) * 0.99), len(tpots_sorted) - 1)])
 
     backends: Dict[str, int] = {}
     for r in successful:
@@ -370,13 +369,13 @@ async def main():
     # Same format as collect_performance_data: ttfts_ms and tbt_lists_ms (no prompts)
     successful = [r for r in results if r.get("success", False)]
     ttfts_ms = [r["ttft_ms"] for r in successful if r.get("ttft_ms") is not None]
-    tbt_lists_ms = [r["time_between_tokens_ms"] for r in successful if r.get("time_between_tokens_ms")]
+    tpot_ms_list = [r["tpot_ms"] for r in successful if r.get("tpot_ms") is not None]
 
-    # List of results: one element per request (per prompt), with ttft_ms, tbts_ms, backend, latency_ms, time_to_choose_backend_ms
+    # List of results: one element per request (per prompt), with ttft_ms, tpot_ms, backend, latency_ms, time_to_choose_backend_ms
     results_list = [
         {
             "ttft_ms": r.get("ttft_ms"),
-            "tbts_ms": r.get("time_between_tokens_ms"),  # list of TBTs in ms, or null
+            "tpot_ms": r.get("tpot_ms"),
             "backend": r.get("backend"),
             "latency_ms": r.get("latency_ms"),
             "time_to_choose_backend_ms": r.get("time_to_choose_backend_ms"),
@@ -395,7 +394,7 @@ async def main():
         },
         "performance": _to_native(stats),
         "ttfts_ms": _to_native(ttfts_ms),
-        "tbt_lists_ms": _to_native(tbt_lists_ms),
+        "tpot_ms_list": _to_native(tpot_ms_list),
         "results": _to_native(results_list),
     }
 

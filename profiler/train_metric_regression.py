@@ -13,7 +13,7 @@ Models:
 
 Targets:
   ttft   - Time To First Token (mean of ttfts_ms)
-  tbt    - Time Between Tokens (mean of all TBT values in tbt_lists_ms)
+  tbt    - Time Per Output Token / mean TBT (mean of tpot_ms_list, one TPOT per prompt)
   latency - Average end-to-end latency (performance.avg_latency_ms)
 
 Usage:
@@ -97,21 +97,24 @@ def get_ttft_target(result: dict) -> float | None:
 
 def get_tbt_target(result: dict) -> float | None:
     """
-    Get mean TBT (Time Between Tokens, ms) from a result dict.
-    Flattens tbt_lists_ms and returns mean of all TBT values. Returns None if failed or no TBT data.
+    Get mean TPOT (Time Per Output Token = avg TBT per prompt, ms) from a result dict.
+    Uses tpot_ms_list (one TPOT per request). Returns None if failed or no TBT data.
     """
     if result.get("failed"):
         return None
+    tpot_list = result.get("tpot_ms_list")
+    if tpot_list and len(tpot_list) > 0:
+        return float(np.mean(tpot_list))
+    # Fallback for legacy data with tbt_lists_ms
     tbt_lists = result.get("tbt_lists_ms")
-    if tbt_lists is None or len(tbt_lists) == 0:
-        metrics_after = result.get("metrics_after", {})
-        if "avg_tbt_ms" in metrics_after:
-            return float(metrics_after["avg_tbt_ms"])
-        return None
-    all_tbts = [t for lst in tbt_lists for t in lst]
-    if not all_tbts:
-        return None
-    return float(np.mean(all_tbts))
+    if tbt_lists and len(tbt_lists) > 0:
+        all_tbts = [t for lst in tbt_lists for t in lst]
+        if all_tbts:
+            return float(np.mean(all_tbts))
+    metrics_after = result.get("metrics_after", {})
+    if "avg_tbt_ms" in metrics_after:
+        return float(metrics_after["avg_tbt_ms"])
+    return None
 
 
 def get_latency_target(result: dict) -> float | None:
