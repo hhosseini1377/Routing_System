@@ -291,6 +291,7 @@ class PerformanceDataCollector:
             f"TENSOR_PARALLEL_SIZE={tensor_parallel_size} ",
             f"GPU_MEMORY_UTILIZATION={memory_util} ",
             f"UVICORN_PORT={self.port} ",
+            
         ]
         if max_model_len is not None:
             env_parts.append(f"MAX_MODEL_LEN={max_model_len} ")

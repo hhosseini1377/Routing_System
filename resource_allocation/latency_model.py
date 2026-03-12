@@ -1,15 +1,16 @@
 import torch
 import torch.nn as nn
 
+
 class LatencyModel(nn.Module):
-    def __init__(self):
+    def __init__(self, in_features: int = 3, hidden: int = 32):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(3, 64),
+            nn.Linear(in_features, hidden),
             nn.ReLU(),
-            nn.Linear(64, 64),
+            nn.Linear(hidden, hidden),
             nn.ReLU(),
-            nn.Linear(64, 1)
+            nn.Linear(hidden, 1),
         )
 
     def forward(self, x):

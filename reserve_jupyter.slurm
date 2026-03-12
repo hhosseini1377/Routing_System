@@ -1,7 +1,8 @@
 #!/bin/bash
 #SBATCH --nodes 1
-#SBATCH --partition=feit-gpu-a100
-#SBATCH --qos=feit
+#SBATCH --partition=deeplearn
+#SBATCH --qos=deeplearngpgpu
+#SBATCH --constraint=glb5
 #SBATCH --gres=gpu:4
 #SBATCH --time=7-00:00:00 
 #SBATCH --cpus-per-task=8
@@ -10,9 +11,17 @@
 #SBATCH --output=outputs/jupyter_%j.out
 
 # --- 1. Load Cluster Modules ---
-# This ensures the base Python interpreter is available and compatible
+# Load required modules (needed for Python 3.11.3 shared libraries)
+module purge
+
 module load GCCcore/11.3.0
 module load Python/3.11.3
+module load CUDA/12.4.1
+
+# Set CUDA_HOME and PATH and LD_LIBRARY_PATH
+export CUDA_HOME=$(dirname $(dirname $(which nvcc)))
+export PATH=$CUDA_HOME/bin:$PATH
+export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
 
 # --- 2. Activate the Virtual Environment ---
 # Your 'env' folder must already exist on your file system

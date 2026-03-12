@@ -152,7 +152,7 @@ async def lifespan(app: FastAPI):
     model_name = os.environ.get("MODEL_NAME", "Qwen/Qwen3-1.8B")
     tensor_parallel_size = int(os.environ.get("TENSOR_PARALLEL_SIZE", "1"))
     pipeline_parallel_size = int(os.environ.get("PIPELINE_PARALLEL_SIZE", "1"))
-    max_model_len = int(os.environ.get("MAX_MODEL_LEN", "8192"))
+    max_model_len = int(os.environ.get("MAX_MODEL_LEN", "4096"))
     max_num_seqs_env = os.environ.get("MAX_NUM_SEQS")
     max_num_batched_tokens_env = os.environ.get("MAX_NUM_BATCHED_TOKENS")
     gpu_memory_utilization = float(os.environ.get("GPU_MEMORY_UTILIZATION", "0.9"))
@@ -163,6 +163,7 @@ async def lifespan(app: FastAPI):
         "pipeline_parallel_size": pipeline_parallel_size,
         "max_model_len": max_model_len,
         "gpu_memory_utilization": gpu_memory_utilization,
+        "dtype": "auto",
     }
     if max_num_seqs_env:
         engine_kwargs["max_num_seqs"] = int(max_num_seqs_env)
