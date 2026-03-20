@@ -730,7 +730,7 @@ async def main():
     parser.add_argument("--completion-timeout-sec", type=float, default=None,
                         help="Max seconds to wait for requests to complete after send phase (default: max(test_duration*3, 300)). Harsh setups will stop early.")
     parser.add_argument("--request-timeout-sec", type=float, default=90.0,
-                        help="Per-request HTTP timeout in seconds (default: 90)")
+                        help="Per-request HTTP timeout in seconds (default: 90)") 
     
     args = parser.parse_args()
 

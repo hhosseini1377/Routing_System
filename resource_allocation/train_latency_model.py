@@ -15,6 +15,7 @@ import copy
 import json
 from pathlib import Path
 
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from sklearn.model_selection import KFold
@@ -218,6 +219,13 @@ def main():
         metavar="R",
         help="Only use setups where throughput_rps/load_rps > R (stable regime). Default: no filter.",
     )
+    parser.add_argument(
+        "--plot",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help="If set, save y_true vs y_pred validation scatter for best fold to PATH",
+    )
     args = parser.parse_args()
 
     torch.manual_seed(args.seed)
@@ -256,6 +264,8 @@ def main():
     best_state = None
     best_scaler_mean = None
     best_scaler_scale = None
+    best_y_val_ms = None
+    best_X_val_scaled = None
 
     for fold, (idx_train, idx_val) in enumerate(kfold.split(X)):
         print(f"\n--- Fold {fold + 1}/{args.n_folds} ---")
@@ -315,6 +325,8 @@ def main():
             best_state = best_fold_state
             best_scaler_mean = scaler_x.mean_.tolist()
             best_scaler_scale = scaler_x.scale_.tolist()
+            best_y_val_ms = y_val_ms_f.copy()
+            best_X_val_scaled = X_val_scaled.copy()
             print(f"  New best model (val_mae={best_fold_val_mae:.1f}ms)")
 
     mean_val = np.mean(fold_val_maes)
@@ -342,6 +354,37 @@ def main():
         out_path,
     )
     print(f"Saved best checkpoint (val_mae={best_overall_val_mae:.1f}ms) to {out_path}")
+
+    if best_y_val_ms is not None:
+        model.eval()
+        with torch.no_grad():
+            X_val_t = torch.from_numpy(best_X_val_scaled.astype(np.float32))
+            pred_val = model(X_val_t)
+        if log_target:
+            y_pred_ms = np.exp(pred_val.numpy()).squeeze(1)
+        else:
+            y_pred_ms = pred_val.numpy().squeeze(1)
+        y_true_ms = best_y_val_ms
+
+        print("\nValidation set (best fold):")
+        print(f"  Actual ({args.metric} ms):  mean = {np.mean(y_true_ms):.2f},  std = {np.std(y_true_ms):.2f}")
+        print(f"  Predicted (ms):           mean = {np.mean(y_pred_ms):.2f},  std = {np.std(y_pred_ms):.2f}")
+
+    if args.plot and best_y_val_ms is not None:
+        fig, ax = plt.subplots()
+        ax.scatter(y_true_ms, y_pred_ms, alpha=0.5, s=12)
+        lims = [min(y_true_ms.min(), y_pred_ms.min()), max(y_true_ms.max(), y_pred_ms.max())]
+        ax.plot(lims, lims, "k--", lw=1, label="y_pred = y_true")
+        ax.set_xlabel("y_true (ms)")
+        ax.set_ylabel("y_pred (ms)")
+        ax.set_title(f"Validation: {args.metric} (MAE = {best_overall_val_mae:.1f} ms)")
+        ax.legend()
+        ax.set_aspect("equal")
+        plot_path = Path(args.plot)
+        plot_path.parent.mkdir(parents=True, exist_ok=True)
+        plt.savefig(plot_path, dpi=150, bbox_inches="tight")
+        plt.close()
+        print(f"Validation plot saved to {plot_path}")
 
 
 if __name__ == "__main__":

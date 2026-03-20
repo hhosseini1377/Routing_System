@@ -1,0 +1,8 @@
+{
+  "model": "mistralai/Mistral-7B-v0.1",
+  "min_gpu_util_per_tp": {
+    "1": 0.2,
+    "2": 0.2,
+    "4": 0.2
+  }
+}

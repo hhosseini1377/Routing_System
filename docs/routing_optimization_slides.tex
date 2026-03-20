@@ -1,0 +1,238 @@
+\documentclass{beamer}
+\usetheme{default}
+\usepackage{amsmath,amssymb}
+
+\title{Routing System Optimization}
+\author{}
+\date{}
+
+\begin{document}
+
+\frame{\titlepage}
+
+\begin{frame}{Problem Setup}
+
+We consider a routing system with $K$ LLMs.
+
+\textbf{Prompt distribution}
+
+\[
+X \sim \mathcal{D}
+\]
+
+\textbf{Routing policy}
+
+\[
+M = \pi(X)
+\]
+
+Even if $\pi$ is deterministic, $M$ is random because $X$ is random.
+
+\textbf{Routing fractions}
+
+\[
+w_i = \Pr(M=i)
+\]
+
+with
+
+\[
+w \in \Delta_K
+\]
+
+where $\Delta_K$ is the probability simplex.
+
+\end{frame}
+
+\begin{frame}{Score Model}
+
+For each prompt $X$, each model $i$ produces a score
+
+\[
+S(X) = (s_1(X), \dots, s_K(X))
+\]
+
+Under routing policy $\pi$:
+
+\[
+S_\pi(X) = s_{\pi(X)}(X)
+\]
+
+The expected score becomes
+
+\[
+\mathbb{E}[S_\pi]
+=
+\sum_{i=1}^K
+w_i
+\mathbb{E}[s_i(X) \mid M=i]
+\]
+
+Define
+
+\[
+S(w)
+\]
+
+as the \textbf{maximum achievable score} under routing fractions $w$.
+
+\end{frame}
+
+\begin{frame}{Latency Model}
+
+Let the global request rate be
+
+\[
+\lambda
+\]
+
+If routing fraction is $w_i$, model $i$ receives load
+
+\[
+\lambda_i = \lambda w_i
+\]
+
+For setup $\Theta$, the expected latency of model $i$ is
+
+\[
+\ell_i(\theta_i, \lambda_i)
+\]
+
+The overall expected latency becomes
+
+\[
+L(\Theta, w)
+=
+\sum_{i=1}^{K}
+w_i
+\,
+\ell_i(\theta_i, \lambda w_i)
+\]
+
+We estimate $\ell_i$ using a learned latency predictor.
+
+\end{frame}
+
+\begin{frame}{Offline Optimization Problem}
+
+Our goal is to select
+
+\[
+(\Theta, w)
+\]
+
+to maximize score while satisfying latency constraints.
+
+\[
+\max_{\Theta,\, w \in \Delta_K}
+S(w)
+\]
+
+subject to
+
+\[
+L(\Theta, w) \le \tau
+\]
+
+where $\tau$ is the latency SLO.
+
+\end{frame}
+
+\begin{frame}{Lagrangian Formulation}
+
+We introduce a Lagrange multiplier $\beta$.
+
+\[
+\mathcal{L}(w, \beta)
+=
+S(w)
+-
+\beta \left(L(\Theta, w) - \tau\right)
+\]
+
+The constrained problem becomes
+
+\[
+\min_{\beta \ge 0}
+\max_{w \in \Delta_K}
+\mathcal{L}(w,\beta)
+\]
+
+This converts the constrained problem into an unconstrained saddle-point problem.
+
+\end{frame}
+
+\begin{frame}{Gradient of the Score Function}
+
+The optimal score under routing fractions is
+
+\[
+S(w)
+=
+\min_{\alpha}
+\left[
+\frac{1}{N}
+\sum_{j=1}^N
+\max_i (s_{ji} - \alpha_i)
++
+\sum_{i=1}^K
+w_i \alpha_i
+\right]
+\]
+
+Let $\alpha^*(w)$ be the optimal dual prices.
+
+Using the envelope theorem,
+
+\[
+\nabla S(w) = \alpha^*(w)
+\]
+
+Thus the dual prices directly give the gradient of the optimal score.
+
+\end{frame}
+
+\begin{frame}{Optimization Algorithm}
+
+We perform projected gradient ascent on $w$.
+
+Update rule:
+
+\[
+w \leftarrow
+\Pi_{\Delta_K}
+\Big(
+w + \eta
+(
+\alpha^*(w)
+-
+\beta
+\nabla L(\Theta, w)
+)
+\Big)
+\]
+
+where
+
+\begin{itemize}
+\item $\alpha^*(w)$ is the dual price vector
+\item $\nabla L(\Theta,w)$ is obtained from the latency model
+\item $\Pi_{\Delta_K}$ projects onto the simplex
+\end{itemize}
+
+\end{frame}
+
+\begin{frame}{Key Insight}
+
+The routing optimizer balances:
+
+\begin{itemize}
+\item score improvement from routing more prompts to a model
+\item latency penalty due to increased load
+\end{itemize}
+
+The dual prices $\alpha^*(w)$ represent the marginal value of assigning more prompts to each model.
+
+\end{frame}
+
+\end{document}

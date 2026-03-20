@@ -108,6 +108,7 @@ def score_under_fractions_dual(
     tie_noise: float = 1e-9,
     seed: int = 0,
     do_repair: bool = True,
+    alpha_init: np.ndarray | None = None,
 ):
     """
     Compute S_hat(w) via dual 'prices' method:
@@ -158,7 +159,10 @@ def score_under_fractions_dual(
     c = fractions_to_counts(w, N)
 
     rng = np.random.default_rng(seed)
-    alpha = np.zeros(K, dtype=float)
+    if alpha_init is None:
+        alpha = np.zeros(K, dtype=float)
+    else:
+        alpha = np.asarray(alpha_init, dtype=float).reshape(K)
 
     # Pre-generate tiny tie-breaking noise (fixed across iters)
     noise = tie_noise * rng.standard_normal(size=S.shape)
