@@ -16,6 +16,7 @@ Gradient: ∇_w (L/τ) = (1/τ) ∇_w L, so we use (1/τ) * dL_dw in the update.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import time
 from typing import Sequence, Tuple
 
 import numpy as np
@@ -132,6 +133,11 @@ def optimize_fractions(
     n_steps: int = 200,
     eta: float = 0.1,
     seed: int = 0,
+    # Dual-prices (score_under_fractions_dual) hyperparameters.
+    dual_max_iter: int = 300,
+    dual_eta0: float = 1e-3,
+    dual_tol: int = 1,
+    dual_tie_noise: float = 1e-9,
     momentum: float = 0.0,
     w_ema_decay: float | None = None,
     verbose: bool = False,
@@ -164,6 +170,14 @@ def optimize_fractions(
         Step size for w updates.
     seed : int
         Seed passed to dual prices routine (for tie-breaking noise).
+    dual_max_iter : int
+        Number of dual/prices iterations inside `score_under_fractions_dual`.
+    dual_eta0 : float
+        Base step size for dual prices; actual eta_t is eta0 / sqrt(t+1).
+    dual_tol : int
+        Stop if max |count_i - c_i| <= dual_tol.
+    dual_tie_noise : float
+        Tiny noise added to break ties deterministically inside dual prices.
     momentum : float
         Momentum for gradient updates. velocity = momentum*velocity + grad; w = project(w + eta*velocity).
         Default 0 (no momentum). Use e.g. 0.9 for smoother updates.
@@ -204,16 +218,15 @@ def optimize_fractions(
     best_L = 0.0
     best_w = w.copy()
     steps_without_improvement = 0
-
     for t in range(n_steps):
         # Score term: compute dual prices alpha(w), warm-start from previous alpha
         S_hat, _, _, _, alpha = score_under_fractions_dual(
             S,
             w,
-            max_iter=300,
-            eta0=1e-3,
-            tol=1,
-            tie_noise=1e-9,
+            max_iter=dual_max_iter,
+            eta0=dual_eta0,
+            tol=dual_tol,
+            tie_noise=dual_tie_noise,
             seed=seed,
             do_repair=True,
             alpha_init=alpha_prev,
@@ -246,7 +259,6 @@ def optimize_fractions(
             best_S = S_hat
             best_L = L_val
             best_w = w.copy()
-
         if patience is not None:
             if obj > prev_best + obj_tol:
                 steps_without_improvement = 0
@@ -314,6 +326,7 @@ def optimize_beta(
     slack_tol: float = 0.01,
     beta_min: float = 1e-4,
     beta_max: float = 1.0,
+    show_progress: bool = True,
     **optimize_fractions_kwargs,
 ) -> BetaOptimizationResult:
     """
@@ -333,7 +346,11 @@ def optimize_beta(
     history_slack: list[float] = []
     w_init: np.ndarray | None = None
 
-    for outer in tqdm(range(max_outer_steps), desc="Optimizing β"):
+    for outer in tqdm(
+        range(max_outer_steps),
+        desc="Optimizing β",
+        disable=not show_progress,
+    ):
         result = optimize_fractions(
             S=S,
             latency_curves=latency_curves,
@@ -346,7 +363,8 @@ def optimize_beta(
         slack = (result.best_L / tau) - 1.0
         history_beta.append(beta)
         history_slack.append(slack)
-        tqdm.write(f'slack: {slack:.4f}  eta_beta: {eta_beta_current:.6f}')
+        if show_progress:
+            tqdm.write(f"slack: {slack:.4f}  eta_beta: {eta_beta_current:.6f}")
 
         if abs(slack) < slack_tol:
             return BetaOptimizationResult(

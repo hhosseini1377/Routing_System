@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import numpy as np
 
 def fractions_to_counts(w: np.ndarray, N: int) -> np.ndarray:
@@ -103,7 +105,7 @@ def score_under_fractions_dual(
     S: np.ndarray,
     w: np.ndarray,
     max_iter: int = 2000,
-    eta0: float = 1e-3,
+    eta0: float = 1e-4,
     tol: int = 0,
     tie_noise: float = 1e-9,
     seed: int = 0,
@@ -168,7 +170,7 @@ def score_under_fractions_dual(
     noise = tie_noise * rng.standard_normal(size=S.shape)
 
     assign = np.zeros(N, dtype=int)
-
+    # print('..........................................................')
     for t in range(max_iter):
         eta = eta0 / np.sqrt(t + 1.0)
 
@@ -180,6 +182,8 @@ def score_under_fractions_dual(
         counts = np.bincount(assign, minlength=K).astype(int)
 
         diff = counts - c
+        
+        # print(t, diff  )
         if np.max(np.abs(diff)) <= tol:
             break
 

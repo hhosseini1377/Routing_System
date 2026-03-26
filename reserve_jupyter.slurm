@@ -2,9 +2,9 @@
 #SBATCH --nodes 1
 #SBATCH --partition=deeplearn
 #SBATCH --qos=gpgpudeeplearn
-#SBATCH --constraint=dlg5
-#SBATCH --gres=gpu:4
-#SBATCH --time=04:00:00 
+# SBATCH --constraint=dlg5
+#SBATCH --gres=gpu:1
+#SBATCH --time=1-00:00:00 
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=80GB
 #SBATCH -A punim2662 

@@ -1,3 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ---- Cluster env (same style as your other scripts) ----
 module load GCCcore/11.3.0
 module load Python/3.11.3
 source ./env/bin/activate
@@ -11,68 +15,110 @@ export TORCHINDUCTOR_CACHE_DIR=/data/gpfs/projects/punim2662/.cache/torch/induct
 export CUDA_CACHE_PATH=/data/gpfs/projects/punim2662/.cache/nvidia/
 export HF_HOME=/data/gpfs/projects/punim2662/.cache/huggingface
 
-# python -m resource_allocation.train_latency_model \
-#   --input performance_data_mistral_7b_final.json \
-#   --metric tpot \
-#   --loss huber \
-#   --plot resource_allocation/latency_model_val_y_true_vs_y_pred.png \
-#   --min-throughput-load-ratio 0.998
+# ---- User parameters ----
+ROOT="${ROOT:-/data/gpfs/projects/punim2662/routing_system}"
 
-# python -m resource_allocation.train_capacity_latency_model \
-#   --input performance_data_yi34b_final.json \
-#   --output resource_allocation/capacity_latency_mistral.pth \
-#   --metric p95_ttft \
-#   --plot resource_allocation/val_y_true_vs_y_pred.png
-#   --min-throughput-load-ratio 0.995
+NUM_GPUS="${NUM_GPUS:-4}"
+LAMBDA_GLOBAL="${LAMBDA_GLOBAL:-70.0}"
+TAU="${TAU:-500}"
 
-# python -m resource_allocation.plot_piecewise_latency \
-#   --input performance_data_yi34b_final.json \
-#   --tp 4 \
-#   --threads 90 \
-#   --metric p95_ttft \
-#   --output plots/p95_ttft_tp4_threads9.png
+# Output pickle
+OUTPUT="${OUTPUT:-resource_allocation/brute_force_result_10.pkl}"
 
-# python -m resource_allocation.main \
-#   --lambda-global 70.0 \
-#   --beta 0.045 \
-#   --tp 2 2 2 \
-#   --threads 50 50 100 \
-#   --metric p95_ttft \
-#   --steps 200 \
-#   --eta 0.1 \
-#   --sample-frac 0.25 \
-#   --tau 500 \
-#   --momentum 0.9 \
-#   --w-ema-decay 0.99 \
-#   --patience 10 \
-#   --obj-tol 1e-4 \
+# Optional: subsample prompts from the scores matrix before optimizing.
+# If empty, do not subsample (brute_force_setup --sample-frac remains None).
+# Default subsampling fraction (faster dual-prices / brute-force runs).
+SAMPLE_FRAC="${SAMPLE_FRAC:-0.25}"
 
-# python -m resource_allocation.main \
-#   --optimize-beta \
-#   --lambda-global 70.0 \
-#   --beta 0.01 \
-#   --tau 800 \
-#   --tp 2 2 2 \
-#   --threads 50 50 100 \
-#   --metric p95_ttft \
-#   --slack-tol 0.02 \
-#   --steps 200 \
-#   --eta 0.1 \
-#   --sample-frac 0.25 \
-#   --momentum 0.9 \
-#   --w-ema-decay 0.99 \
-#   --patience 10 \
-#   --obj-tol 1e-4 \
-#   --eta-beta-decay 0.98 \
-#   --eta-beta 0.01 \
-#   --eta-beta-min 1e-4
+# Metric for latency curves
+METRIC="${METRIC:-p95_ttft}"   # one of: tpot, avg_latency_ms, p95_ttft, p95_topt
 
-# python -m profiler.check_model_memory --model 01-ai/Yi-34B --tp 1 2 4 --util-min 0.2
-# python -m profiler.check_model_memory --model mistralai/Mistral-7B-v0.1 --tp 1 2 4 --util-min 0.2
-# python -m profiler.check_model_memory --model lmsys/vicuna-13b-v1.5 --tp 1 2 4 --util-min 0.2
+# ---- Search space (can widen/narrow) ----
+TP_OPTIONS="${TP_OPTIONS:-1 2 4}"              # --tp-options
+THREAD_OPTIONS="${THREAD_OPTIONS:-10 20 30 40 50 60 70 80 90 100}"  # --thread-options
+MEMORY_SCALE_OPTIONS="${MEMORY_SCALE_OPTIONS:-1.0}"                   # --memory-scale-options
 
-python -m resource_allocation.resource_packing \
-    --tp 2 2 2 \
-    --threads 0.5 0.5 1 \
-    --memory 0.5 0.5 0.9 \
-    --gpus 4
+# ---- Feasibility / SLO tolerance ----
+SLACK_TOL="${SLACK_TOL:-0.02}"
+MIN_THREAD_SUM_RATIO="${MIN_THREAD_SUM_RATIO:-0.0}"
+
+# ---- optimize_fractions hyperparams ----
+BETA_INIT="${BETA_INIT:-0.01}"  # --beta-init (initial beta for optimize_beta)
+STEPS="${STEPS:-200}"
+ETA="${ETA:-0.1}"
+DUAL_MAX_ITER="${DUAL_MAX_ITER:-300}"         # --dual-max-iter: dual/prices iterations (inner score solver)
+DUAL_ETA0="${DUAL_ETA0:-1e-4}"               # --dual-eta0: base step size for dual prices
+DUAL_TOL="${DUAL_TOL:-1}"                   # --dual-tol: stop when |count-c| <= dual_tol
+DUAL_TIE_NOISE="${DUAL_TIE_NOISE:-1e-9}"     # --dual-tie-noise: noise for deterministic tie-breaking
+MOMENTUM="${MOMENTUM:-0.0}"
+W_EMA_DECAY="${W_EMA_DECAY:-0.99}"
+PATIENCE="${PATIENCE:-10}"
+OBJ_TOL="${OBJ_TOL:-1e-4}"
+
+# ---- optimize_beta hyperparams ----
+MAX_OUTER_STEPS="${MAX_OUTER_STEPS:-20}"
+ETA_BETA="${ETA_BETA:-0.01}"
+ETA_BETA_MIN="${ETA_BETA_MIN:-1e-4}"
+ETA_BETA_DECAY="${ETA_BETA_DECAY:-0.98}"
+
+# ---- Optional subset scenarios ----
+# Set INCLUDE_SUBSET=1 to also test subset deployments
+INCLUDE_SUBSET="${INCLUDE_SUBSET:-0}"  # default 0
+SUBSET_SIZES="${SUBSET_SIZES:-2 3}"  # --subset-sizes
+
+cd "$ROOT"
+
+echo "Running brute-force setup search..."
+echo "  NUM_GPUS=$NUM_GPUS"
+echo "  LAMBDA_GLOBAL=$LAMBDA_GLOBAL"
+echo "  TAU=$TAU"
+echo "  METRIC=$METRIC"
+echo "  OUTPUT=$OUTPUT"
+if [[ -n "$SAMPLE_FRAC" ]]; then
+  echo "  SAMPLE_FRAC=$SAMPLE_FRAC"
+fi
+
+CMD=(python -m resource_allocation.brute_force_setup
+  --num-gpus "$NUM_GPUS"
+  --lambda-global "$LAMBDA_GLOBAL"
+  --tau "$TAU"
+  --metric "$METRIC"
+  --beta-init "$BETA_INIT"
+  --slack-tol "$SLACK_TOL"
+  --tp-options $TP_OPTIONS
+  --thread-options $THREAD_OPTIONS
+  --memory-scale-options $MEMORY_SCALE_OPTIONS
+  --min-thread-sum-ratio "$MIN_THREAD_SUM_RATIO"
+
+  --steps "$STEPS"
+  --eta "$ETA"
+  --dual-max-iter "$DUAL_MAX_ITER"
+  --dual-eta0 "$DUAL_ETA0"
+  --dual-tol "$DUAL_TOL"
+  --dual-tie-noise "$DUAL_TIE_NOISE"
+  --momentum "$MOMENTUM"
+  --w-ema-decay "$W_EMA_DECAY"
+  --patience "$PATIENCE"
+  --obj-tol "$OBJ_TOL"
+
+  --max-outer-steps "$MAX_OUTER_STEPS"
+  --eta-beta "$ETA_BETA"
+  --eta-beta-min "$ETA_BETA_MIN"
+  --eta-beta-decay "$ETA_BETA_DECAY"
+
+  -o "$OUTPUT"
+)
+
+if [[ -n "$SAMPLE_FRAC" ]]; then
+  CMD+=(--sample-frac "$SAMPLE_FRAC")
+fi
+
+if [[ "$INCLUDE_SUBSET" == "1" ]]; then
+  CMD+=(--include-subset-scenarios --subset-sizes $SUBSET_SIZES)
+fi
+
+echo "Command:"
+printf ' %q' "${CMD[@]}"
+echo
+
+"${CMD[@]}"

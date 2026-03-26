@@ -23,7 +23,6 @@ import pickle
 from pathlib import Path
 
 import numpy as np
-import matplotlib.pyplot as plt
 
 from .dual_prices import score_under_fractions_dual  # noqa: F401  (re-exported use)
 from .optimize_fractions import (
@@ -33,17 +32,16 @@ from .optimize_fractions import (
     optimize_fractions,
     optimize_beta,
 )
+from .routerbench_data import load_scores as load_routerbench_scores
 
 
 def load_scores(path: str) -> np.ndarray:
-    with open(path, "rb") as f:
-        data = pickle.load(f)
-    if "scores" not in data:
-        raise KeyError("routerbench_0shot_scores.pkl must contain 'scores'")
-    S = np.asarray(data["scores"], dtype=float)
-    if S.ndim != 2:
-        raise ValueError("scores must be 2D (N,K)")
-    return S
+    """
+    Load and reorder RouterBench scores so columns match the canonical
+    backend ordering used by routing (`models_config.ROUTING_MODELS`).
+    """
+
+    return load_routerbench_scores(path)
 
 
 def extract_metric_vs_load_single_model(
@@ -119,9 +117,12 @@ def build_latency_curves_for_three_models(
     Build PiecewiseLinearLatency curves for the three backends using the
     *_final.json performance files.
 
-    Each backend can have its own (tp, threads) setup; the order of models is
-    assumed to match the columns of S in routerbench_0shot_scores.pkl:
-      0: Mistral, 1: Vicuna, 2: Yi.
+    CLI argument order for `tps/threads` is:
+      (0) Mistral, (1) Vicuna, (2) Yi.
+
+    Internally, we reorder the curves so their output order matches the
+    canonical score order produced by `routerbench_data.load_scores`:
+      (0) Mistral, (1) Yi, (2) Vicuna.
     """
     root = Path(".")
     files = [
@@ -133,7 +134,7 @@ def build_latency_curves_for_three_models(
     if len(tps) != 3 or len(threads) != 3:
         raise ValueError("tps and threads must each have length 3 (one per backend)")
 
-    curves: list[PiecewiseLinearLatency] = []
+    curves_cli_order: list[PiecewiseLinearLatency] = []
     for path, tp, th in zip(files, tps, threads):
         loads, vals = extract_metric_vs_load_single_model(
             str(path),
@@ -141,8 +142,12 @@ def build_latency_curves_for_three_models(
             thread_percentage=th,
             metric=metric,
         )
-        curves.append(PiecewiseLinearLatency(load_grid=loads, latency_ms=vals))
-    return curves
+        curves_cli_order.append(PiecewiseLinearLatency(load_grid=loads, latency_ms=vals))
+
+    # Reorder to canonical score order: [Mistral, Yi, Vicuna]
+    # CLI order is [Mistral, Vicuna, Yi] so mapping is [0, 2, 1].
+    reorder = [0, 2, 1]
+    return [curves_cli_order[i] for i in reorder]
 
 
 def run_optimize(
@@ -160,6 +165,11 @@ def run_optimize(
     w_ema_decay: float | None = None,
     patience: int | None = None,
     obj_tol: float = 1e-4,
+    # dual-prices hyperparameters (passed to score_under_fractions_dual)
+    dual_max_iter: int = 300,
+    dual_eta0: float = 1e-3,
+    dual_tol: int = 1,
+    dual_tie_noise: float = 1e-9,
 ) -> OptimizationResult:
     """
     Load data and run optimize_fractions for the three-model setup.
@@ -192,6 +202,10 @@ def run_optimize(
         w_ema_decay=w_ema_decay,
         patience=patience,
         obj_tol=obj_tol,
+        dual_max_iter=dual_max_iter,
+        dual_eta0=dual_eta0,
+        dual_tol=dual_tol,
+        dual_tie_noise=dual_tie_noise,
     )
     return result
 
@@ -210,6 +224,11 @@ def run_optimize_beta(
     w_ema_decay: float | None = None,
     patience: int | None = None,
     obj_tol: float = 1e-4,
+    # dual-prices hyperparameters (passed to score_under_fractions_dual)
+    dual_max_iter: int = 300,
+    dual_eta0: float = 1e-3,
+    dual_tol: int = 1,
+    dual_tie_noise: float = 1e-9,
     beta_init: float = 0.01,
     max_outer_steps: int = 50,
     eta_beta: float = 0.01,
@@ -246,6 +265,10 @@ def run_optimize_beta(
         w_ema_decay=w_ema_decay,
         patience=patience,
         obj_tol=obj_tol,
+        dual_max_iter=dual_max_iter,
+        dual_eta0=dual_eta0,
+        dual_tol=dual_tol,
+        dual_tie_noise=dual_tie_noise,
     )
 
 
@@ -318,7 +341,7 @@ def main() -> None:
         default=None,
         metavar="F",
         help="If set in (0,1), randomly subsample a fraction F of prompts from scores "
-             "before optimization (e.g., 0.25 to use 25% of 36120).",
+            "before optimization (e.g., 0.25 to use 25%% of 36120).",
     )
     parser.add_argument(
         "--momentum",
@@ -383,6 +406,30 @@ def main() -> None:
         default=0.01,
         help="Stop when |L/tau - 1| < this when --optimize-beta (default: 0.01).",
     )
+    parser.add_argument(
+        "--dual-max-iter",
+        type=int,
+        default=300,
+        help="Dual-prices iterations inside the score solver (default: 300).",
+    )
+    parser.add_argument(
+        "--dual-eta0",
+        type=float,
+        default=1e-3,
+        help="Dual-prices base step size (default: 1e-3).",
+    )
+    parser.add_argument(
+        "--dual-tol",
+        type=int,
+        default=1,
+        help="Dual-prices tolerance for count mismatch (default: 1).",
+    )
+    parser.add_argument(
+        "--dual-tie-noise",
+        type=float,
+        default=1e-9,
+        help="Dual-prices tie-breaking noise (default: 1e-9).",
+    )
     args = parser.parse_args()
 
     if args.optimize_beta:
@@ -400,6 +447,10 @@ def main() -> None:
             w_ema_decay=args.w_ema_decay,
             patience=args.patience,
             obj_tol=args.obj_tol,
+            dual_max_iter=args.dual_max_iter,
+            dual_eta0=args.dual_eta0,
+            dual_tol=args.dual_tol,
+            dual_tie_noise=args.dual_tie_noise,
             beta_init=args.beta,
             max_outer_steps=args.max_outer_steps,
             eta_beta=args.eta_beta,
@@ -429,6 +480,10 @@ def main() -> None:
             w_ema_decay=args.w_ema_decay,
             patience=args.patience,
             obj_tol=args.obj_tol,
+            dual_max_iter=args.dual_max_iter,
+            dual_eta0=args.dual_eta0,
+            dual_tol=args.dual_tol,
+            dual_tie_noise=args.dual_tie_noise,
         )
 
     print("\n=== Optimization finished ===")
