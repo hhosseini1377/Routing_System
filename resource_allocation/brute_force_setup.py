@@ -6,8 +6,8 @@ Given the router's objective/constraint pieces:
 - latency-vs-load curves (from per-model performance JSON)
 - feasibility of (tp, threads, memory) using 2D packing constraints
 
-We enumerate candidate deployments and run `optimize_beta` (dual price solver
-inside `optimize_fractions`) to find routing fractions for each candidate.
+We enumerate candidate deployments and run outer β search (`optimize_beta`
+or `optimize_beta_bisection`) with `optimize_fractions` inside each candidate.
 
 This file also contains pickle-safe helpers (`save_result` / `load_result`)
 so old pickled artifacts can be loaded in notebooks.
@@ -33,7 +33,7 @@ from .routerbench_data import (
     load_scores,
 )
 from .resource_packing import check_feasibility
-from .optimize_fractions import optimize_beta
+from .optimize_fractions import optimize_beta, optimize_beta_bisection
 
 
 @dataclass
@@ -56,6 +56,9 @@ class SetupCandidate:
     best_score: float | None = None
     best_latency: float | None = None
     best_slack: float | None = None
+    # Dual prices α_i at the best Lagrangian step (same routing state as best_score/best_latency).
+    # Length matches deployed backends in `subset` order.
+    alpha: list[float] | None = None
 
     # Feasibility flags
     packing_feasible: bool = False
@@ -164,6 +167,10 @@ def brute_force_setup(
     eta_beta: float = 0.01,
     eta_beta_min: float = 1e-4,
     eta_beta_decay: float = 0.98,
+    beta_method: str = "subgradient",
+    beta_min: float = 0.0,
+    beta_max: float = 5.0,
+    show_progress: bool = False,
 ) -> BruteForceResult:
     """
     Brute-force enumerate (tp, threads, memory) setups and pick the best SLO-feasible.
@@ -176,6 +183,7 @@ def brute_force_setup(
         raise ValueError(f"Current pipeline expects exactly 3 routing models, got K={K}")
 
     model_memory_paths = get_model_memory_paths(root)
+    
     performance_data_paths = get_performance_data_paths(root)
 
     # Load per-model memory configs once.
@@ -204,7 +212,7 @@ def brute_force_setup(
             subset_indices.append(tuple(range(K)))
     else:
         subset_indices = [tuple(range(K))]
-
+    
     # Latency cache keyed by (model_index_in_full, tp, thread_percentage, metric).
     latency_cache: dict[tuple[int, int, int, str], Any] = {}
 
@@ -228,28 +236,33 @@ def brute_force_setup(
     best_setup: SetupCandidate | None = None
     best_latency: float | None = None
 
-    # Pre-compute how many candidate combinations we will consider (after the
-    # underutilization filter). This is what we want shown in tqdm's `total=...`.
+    # Pre-compute how many candidate combinations we attempt in total.
+    # This includes combinations later skipped by filters, so the progress bar
+    # reflects all attempted (tp, thread, memory) combinations.
     total_candidates = 0
     for subset in subset_indices:
         subset = tuple(subset)
         K_sub = len(subset)
+        num_tp = len(tp_options) ** K_sub
+        num_threads = len(thread_options) ** K_sub
         num_mem_scales = len(memory_scale_options) ** K_sub
-
-        for tp_levels in itertools.product(tp_options, repeat=K_sub):
-            tp_arr = np.asarray(tp_levels, dtype=float)
-            for thread_levels in itertools.product(thread_options, repeat=K_sub):
-                thread_fracs = [_thread_int_to_frac(th) for th in thread_levels]
-                total_thread_demand = float(np.dot(tp_arr, np.asarray(thread_fracs, dtype=float)))
-                if min_thread_sum_ratio > 0.0:
-                    # Interpret min_thread_sum_ratio as "fraction of total thread capacity".
-                    if total_thread_demand < float(min_thread_sum_ratio) * float(num_gpus):
-                        continue
-                total_candidates += num_mem_scales
+        total_candidates += num_tp * num_threads * num_mem_scales
 
     # Track brute-force candidate evaluation progress.
     # (We keep tqdm output inside this file and disable tqdm inside optimize_beta.)
-    pbar = tqdm(total=total_candidates, desc="Evaluating candidates", unit="cand", dynamic_ncols=True)
+    pbar = tqdm(
+        total=total_candidates,
+        desc="Evaluating candidates",
+        unit="cand",
+        dynamic_ncols=True,
+        disable=not show_progress,
+    )
+
+    def pbar_log(msg: str) -> None:
+        """Like tqdm.write, but silent when the bar is disabled (no stray stderr lines)."""
+        if not pbar.disable:
+            tqdm.write(msg)
+
     try:
         for subset in subset_indices:
             subset = tuple(subset)
@@ -263,7 +276,6 @@ def brute_force_setup(
             tp_choice_space = list(itertools.product(tp_options, repeat=K_sub))
             thread_choice_space = list(itertools.product(thread_options, repeat=K_sub))
             mem_choice_space = list(itertools.product(memory_scale_options, repeat=K_sub))
-
             for tp_levels in tp_choice_space:
                 tp_arr_int = np.asarray(tp_levels, dtype=int)
                 tp_arr_float = np.asarray(tp_levels, dtype=float)
@@ -274,6 +286,11 @@ def brute_force_setup(
                     total_thread_demand = float(np.dot(tp_arr_float, np.asarray(thread_fracs_sub, dtype=float)))
                     if min_thread_sum_ratio > 0.0:
                         if total_thread_demand < float(min_thread_sum_ratio) * float(num_gpus):
+                            # Count skipped memory combinations as attempted.
+                            pbar.update(len(mem_choice_space))
+                            pbar_log(
+                                f"(tp, thread) combination: {tp_levels}, {thread_levels} - Underutilized thread demand: {total_thread_demand} < {float(min_thread_sum_ratio) * float(num_gpus)}"
+                            )
                             continue
 
                     # Evaluate each memory_scale combination for this (tp, thread).
@@ -305,6 +322,7 @@ def brute_force_setup(
                         all_candidates.append(cand)
 
                         if not feas.feasible:
+                            pbar_log(f"(tp, thread) combination: {tp_levels}, {thread_levels} - Not feasible")
                             continue
 
                         # Build latency curves for the subset.
@@ -316,17 +334,7 @@ def brute_force_setup(
                         # Extract score columns for the subset.
                         S = S_full[:, list(subset_order)]
 
-                        beta_res = optimize_beta(
-                            S=S,
-                            latency_curves=latency_curves,
-                            lambda_global=lambda_global,
-                            tau=tau,
-                            beta_init=beta_init,
-                            max_outer_steps=max_outer_steps,
-                            eta_beta=eta_beta,
-                            eta_beta_min=eta_beta_min,
-                            eta_beta_decay=eta_beta_decay,
-                            slack_tol=slack_tol,
+                        inner_kw = dict(
                             n_steps=n_steps,
                             eta=eta,
                             seed=seed,
@@ -340,18 +348,55 @@ def brute_force_setup(
                             obj_tol=obj_tol,
                             show_progress=False,
                         )
+                        if beta_method == "subgradient":
+                            beta_res = optimize_beta(
+                                S=S,
+                                latency_curves=latency_curves,
+                                lambda_global=lambda_global,
+                                tau=tau,
+                                beta_init=beta_init,
+                                max_outer_steps=max_outer_steps,
+                                eta_beta=eta_beta,
+                                eta_beta_min=eta_beta_min,
+                                eta_beta_decay=eta_beta_decay,
+                                slack_tol=slack_tol,
+                                beta_min=beta_min,
+                                beta_max=beta_max,
+                                **inner_kw,
+                            )
+                        elif beta_method == "bisection":
+                            beta_res = optimize_beta_bisection(
+                                S=S,
+                                latency_curves=latency_curves,
+                                lambda_global=lambda_global,
+                                tau=tau,
+                                beta_init=beta_init,
+                                max_outer_steps=max_outer_steps,
+                                slack_tol=slack_tol,
+                                beta_min=beta_min,
+                                beta_max=beta_max,
+                                **inner_kw,
+                            )
+                        else:
+                            raise ValueError(
+                                f"Unknown beta_method: {beta_method!r} (use 'subgradient' or 'bisection')"
+                            )
 
                         res = beta_res.result
                         cand.best_beta = float(beta_res.best_beta)
                         cand.best_score = float(res.best_S)
                         cand.best_latency = float(res.best_L)
                         cand.best_slack = float((res.best_L / tau) - 1.0)
+                        cand.alpha = [float(x) for x in np.asarray(res.best_alpha).reshape(-1)]
 
                         cand.slo_feasible = res.best_L <= tau * (1.0 + slack_tol)
 
                         if not cand.slo_feasible:
+                            pbar_log(f"(tp, thread) combination: {tp_levels}, {thread_levels} - Not feasible")
                             continue
-
+                        pbar_log(
+                            f"(tp, thread) combination: {tp_levels}, {thread_levels} - Feasible, latency: {cand.best_latency}, score: {cand.best_score}"
+                        )
                         all_feasible.append(cand)
 
                         # Rank by best score; tie-break by lower latency.
@@ -425,6 +470,20 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--eta-beta", type=float, default=0.01)
     p.add_argument("--eta-beta-min", type=float, default=1e-4)
     p.add_argument("--eta-beta-decay", type=float, default=0.98)
+    p.add_argument(
+        "--optimize-beta-method",
+        type=str,
+        default="subgradient",
+        choices=("subgradient", "bisection"),
+        help="Outer β search (default: subgradient).",
+    )
+    p.add_argument("--beta-min", type=float, default=0.0, help="Lower clip for β (both methods).")
+    p.add_argument("--beta-max", type=float, default=5.0, help="Upper clip for β (both methods).")
+    p.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Disable progress bar and per-candidate tqdm log lines.",
+    )
 
     p.add_argument("-o", "--output", type=str, required=True, help="Where to save the result pickle.")
     return p
@@ -463,6 +522,10 @@ def main() -> None:
         eta_beta=args.eta_beta,
         eta_beta_min=args.eta_beta_min,
         eta_beta_decay=args.eta_beta_decay,
+        beta_method=args.optimize_beta_method,
+        beta_min=args.beta_min,
+        beta_max=args.beta_max,
+        show_progress=not args.quiet,
     )
 
     save_result(result, args.output)
@@ -473,6 +536,8 @@ def main() -> None:
         print("  tp:", result.best_setup.tp_levels)
         print("  threads:", result.best_setup.thread_levels)
         print("  memory:", result.best_setup.memory_levels)
+        if result.best_setup.alpha is not None:
+            print("  alpha (subset order):", result.best_setup.alpha)
         print("Best score:", result.best_score)
         print("Best latency:", result.best_latency)
 

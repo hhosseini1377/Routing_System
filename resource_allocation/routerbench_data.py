@@ -20,7 +20,7 @@ import numpy as np
 
 from .models_config import ROUTING_MODELS, get_performance_data_paths, get_scores_path
 from .models_config import get_model_memory_paths
-from .optimize_fractions import PiecewiseLinearLatency
+from .optimize_fractions import DEFAULT_OVERLOAD_PENALTY_MS_PER_RPS, PiecewiseLinearLatency
 
 
 def load_scores(path: str | Path) -> np.ndarray:
@@ -95,6 +95,16 @@ def _get_metric_value_from_item(item: dict[str, Any], metric: str) -> float | No
     if metric == "avg_latency_ms":
         v = perf.get("avg_latency_ms")
         return float(v) if v is not None else None
+
+    if metric == "avg_ttft":
+        ttfts = base.get("ttfts_ms") or item.get("ttfts_ms")
+        if ttfts:
+            return float(np.mean(ttfts))
+        v = perf.get("avg_ttft_ms")
+        if v is not None:
+            return float(v)
+        v2 = metrics_after.get("avg_ttft_ms")
+        return float(v2) if v2 is not None else None
 
     if metric == "p95_ttft":
         ttfts = base.get("ttfts_ms") or item.get("ttfts_ms")
@@ -176,11 +186,36 @@ def extract_metric_vs_load_single_model(
     return loads_arr, vals_arr
 
 
+def extract_metric_vs_load_dict_single_model(
+    path: str | Path,
+    tensor_parallel_size: int,
+    thread_percentage: int,
+    metric: str,
+) -> dict[float, float]:
+    """
+    Extract `{load_rps: metric_value}` for a fixed backend setup.
+
+    This is a convenience wrapper around `extract_metric_vs_load_single_model`
+    that preserves the (averaged) aggregation per unique `load_rps`.
+    """
+    loads, vals = extract_metric_vs_load_single_model(
+        path=path,
+        tensor_parallel_size=tensor_parallel_size,
+        thread_percentage=thread_percentage,
+        metric=metric,
+    )
+    # Ensure we return plain Python floats (helps pickle/JSON consumers).
+    return {float(load): float(val) for load, val in zip(loads.tolist(), vals.tolist())}
+
+
 def build_latency_curves(
     tps: list[int] | tuple[int, ...],
     threads: list[int] | tuple[int, ...],
     performance_data_paths: list[str | Path],
     metric: str,
+    *,
+    forbid_overload_extrapolation: bool = True,
+    overload_penalty_ms_per_rps: float = DEFAULT_OVERLOAD_PENALTY_MS_PER_RPS,
 ) -> list[PiecewiseLinearLatency]:
     """Build per-model latency curves for the provided (tp,thread) setup."""
 
@@ -195,8 +230,46 @@ def build_latency_curves(
             thread_percentage=int(th),
             metric=metric,
         )
-        curves.append(PiecewiseLinearLatency(load_grid=loads, latency_ms=vals))
+        curves.append(
+            PiecewiseLinearLatency(
+                load_grid=loads,
+                latency_ms=vals,
+                forbid_overload_extrapolation=forbid_overload_extrapolation,
+                overload_penalty_ms_per_rps=overload_penalty_ms_per_rps,
+            )
+        )
     return curves
+
+
+def build_metric_vs_load_lookup_tables_for_model(
+    *,
+    performance_data_path: str | Path,
+    tp_options: list[int] | tuple[int, ...],
+    thread_options: list[int] | tuple[int, ...],
+    metric: str,
+) -> dict[tuple[int, int], dict[float, float]]:
+    """
+    Build lookup tables for one performance JSON file.
+
+    Returns
+    -------
+    lookup :
+        A dict keyed by `(tp_level, thread_percentage_level)` where each value
+        is a dict `{load_rps: metric_value}`.
+    """
+    performance_data_path = Path(performance_data_path)
+    lookup: dict[tuple[int, int], dict[float, float]] = {}
+    for tp in tp_options:
+        tp = int(tp)
+        for th in thread_options:
+            th = int(th)
+            lookup[(tp, th)] = extract_metric_vs_load_dict_single_model(
+                path=performance_data_path,
+                tensor_parallel_size=tp,
+                thread_percentage=th,
+                metric=metric,
+            )
+    return lookup
 
 
 def build_latency_curves_for_three_models(
@@ -204,6 +277,9 @@ def build_latency_curves_for_three_models(
     threads: list[int] | tuple[int, ...],
     metric: str,
     root: Path | str = ".",
+    *,
+    forbid_overload_extrapolation: bool = True,
+    overload_penalty_ms_per_rps: float = DEFAULT_OVERLOAD_PENALTY_MS_PER_RPS,
 ) -> list[PiecewiseLinearLatency]:
     """Convenience wrapper for the canonical 3-backend routing setup."""
 
@@ -211,7 +287,14 @@ def build_latency_curves_for_three_models(
         raise ValueError("tps and threads must each have length 3 (one per backend)")
 
     paths = get_performance_data_paths(root)
-    return build_latency_curves(tps=list(tps), threads=list(threads), performance_data_paths=paths, metric=metric)
+    return build_latency_curves(
+        tps=list(tps),
+        threads=list(threads),
+        performance_data_paths=paths,
+        metric=metric,
+        forbid_overload_extrapolation=forbid_overload_extrapolation,
+        overload_penalty_ms_per_rps=overload_penalty_ms_per_rps,
+    )
 
 
 def load_model_memory_config(path: str | Path) -> dict[str, float]:
@@ -249,8 +332,10 @@ def get_default_config(root: Path | str = ".") -> tuple[list[Path], list[Path]]:
 __all__ = [
     "load_scores",
     "extract_metric_vs_load_single_model",
+    "extract_metric_vs_load_dict_single_model",
     "build_latency_curves",
     "build_latency_curves_for_three_models",
+    "build_metric_vs_load_lookup_tables_for_model",
     "load_model_memory_config",
     "get_default_config",
 ]

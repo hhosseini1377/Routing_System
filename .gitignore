@@ -214,3 +214,7 @@ outputs/
 temp.py
 temp.ipynb
 performance*
+
+plots/*
+resource_allocation/brute_force_results/
+resource_allocation/brute_force_resultss/

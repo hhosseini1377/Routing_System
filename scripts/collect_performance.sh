@@ -24,20 +24,20 @@ if ! "${ROOT_DIR}/scripts/start_mps.sh"; then
 fi
 
 python -m profiler.collect_performance_data \
-    --model-name "mistralai/Mistral-7B-Instruct-v0.1" \
-    --output performance_data_mistral_7b_final.json \
+    --model-name "lmsys/vicuna-13b-v1.5" \
+    --output performance_data_vicuna_13b_final.json \
     --prompts-path datasets/routerbench_0shot_prompts.pkl \
     --memory-range 0.8 0.8 \
     --memory-steps 1 \
-    --thread-range 10 100 \
-    --thread-steps 10 \
+    --thread-range 30 100 \
+    --thread-steps 8 \
     --load-range 20 40 \
     --load-steps 10 \
     --warmup-duration 10 \
     --test-duration 60 \
     --completion-timeout-sec 5 \
     --request-timeout-sec 120 \
-    --tensor-parallel-sizes 1 2 4 \
+    --tensor-parallel-sizes 2 4 \
     --max-model-len 2048 \
 #    --max-num-seqs-range 256 1024 --max-num-seqs-steps 4 \
 #    --max-num-batched-tokens-range 2048 8192 --max-num-batched-tokens-steps 4 \

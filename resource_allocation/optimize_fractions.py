@@ -24,6 +24,9 @@ from tqdm import tqdm
 
 from .dual_prices import score_under_fractions_dual
 
+# Steep linear penalty above max profiled load (ms latency per RPS beyond grid).
+DEFAULT_OVERLOAD_PENALTY_MS_PER_RPS = 5000.0
+
 
 def project_to_simplex(w: np.ndarray) -> np.ndarray:
     """
@@ -60,12 +63,24 @@ class PiecewiseLinearLatency:
     1D piecewise-linear latency curve for a single model:
         load_grid (in RPS) -> latency_ms.
 
-    Assumes load_grid is strictly increasing. Between grid points, we use linear
-    interpolation; outside, we clamp to the nearest endpoint.
+    Assumes load_grid is strictly increasing. Between grid points we linearly
+    interpolate.
+
+    Below min(grid): extrapolate along the first segment (same as before).
+
+    Above max(grid): by default we do *not* extrapolate the last profiled segment
+    (unknown operating region). We attach latency at the last grid point plus a
+    steep linear penalty in (load - max_grid) so latency is large *and* the slope
+    w.r.t. load is positive, giving useful gradients for the routing optimizer.
+    Set ``forbid_overload_extrapolation=False`` to restore legacy extrapolation
+    past the last segment.
     """
 
     load_grid: np.ndarray  # shape (M,)
     latency_ms: np.ndarray  # shape (M,)
+    forbid_overload_extrapolation: bool = True
+    # Used when forbid_overload_extrapolation: latency = y(max) + rho * (load - max).
+    overload_penalty_ms_per_rps: float = DEFAULT_OVERLOAD_PENALTY_MS_PER_RPS
 
     def __post_init__(self) -> None:
         self.load_grid = np.asarray(self.load_grid, dtype=float).reshape(-1)
@@ -76,17 +91,25 @@ class PiecewiseLinearLatency:
             raise ValueError("Need at least two points for piecewise-linear curve")
         if not np.all(np.diff(self.load_grid) > 0):
             raise ValueError("load_grid must be strictly increasing")
+        if self.forbid_overload_extrapolation and self.overload_penalty_ms_per_rps <= 0:
+            raise ValueError("overload_penalty_ms_per_rps must be > 0 when forbid_overload_extrapolation is True")
 
     def value_and_slope(self, load: float) -> Tuple[float, float]:
         """
-        Return (latency_ms(load), d latency_ms / d load) using piecewise-linear interpolation.
+        Return (latency_ms(load), d latency_ms / d load).
 
-        - For load below min(grid): clamp to first segment.
-        - For load above max(grid): clamp to last segment.
+        - For load below min(grid): extrapolate along the first segment.
+        - For load above max(grid): if ``forbid_overload_extrapolation``, return
+          y(max) + rho * (load - max) with slope rho; else extrapolate the last segment.
         """
         x = float(load)
         xg = self.load_grid
         yg = self.latency_ms
+
+        if self.forbid_overload_extrapolation and x > float(xg[-1]):
+            rho = float(self.overload_penalty_ms_per_rps)
+            dx = x - float(xg[-1])
+            return float(yg[-1] + rho * dx), rho
 
         if x <= xg[0]:
             i = 0
@@ -121,6 +144,8 @@ class OptimizationResult:
     best_S: float  # score at best step
     best_L: float  # latency at best step
     best_w: np.ndarray  # w at best step
+    # Dual prices α from score_under_fractions_dual at the best-objective step (same w as best_w).
+    best_alpha: np.ndarray
 
 
 def optimize_fractions(
@@ -217,7 +242,9 @@ def optimize_fractions(
     best_S = 0.0
     best_L = 0.0
     best_w = w.copy()
+    best_alpha = np.zeros(K, dtype=float)
     steps_without_improvement = 0
+
     for t in range(n_steps):
         # Score term: compute dual prices alpha(w), warm-start from previous alpha
         S_hat, _, _, _, alpha = score_under_fractions_dual(
@@ -244,6 +271,7 @@ def optimize_fractions(
 
         L_val = float(np.sum(w * lat_vals))
         obj = S_hat - beta * ((L_val / tau) - 1.0)
+        # print(obj)
         history_L.append(L_val)
         history_S.append(S_hat)
         history_obj.append(obj)
@@ -259,6 +287,7 @@ def optimize_fractions(
             best_S = S_hat
             best_L = L_val
             best_w = w.copy()
+            best_alpha = np.asarray(alpha, dtype=float).reshape(-1).copy()
         if patience is not None:
             if obj > prev_best + obj_tol:
                 steps_without_improvement = 0
@@ -300,6 +329,7 @@ def optimize_fractions(
         best_S=best_S,
         best_L=best_L,
         best_w=best_w,
+        best_alpha=best_alpha,
     )
 
 
@@ -324,8 +354,8 @@ def optimize_beta(
     eta_beta_min: float = 1e-4,
     eta_beta_decay: float = 0.98,
     slack_tol: float = 0.01,
-    beta_min: float = 1e-4,
-    beta_max: float = 1.0,
+    beta_min: float = 0,
+    beta_max: float = 5.0,
     show_progress: bool = True,
     **optimize_fractions_kwargs,
 ) -> BetaOptimizationResult:
@@ -364,7 +394,7 @@ def optimize_beta(
         history_beta.append(beta)
         history_slack.append(slack)
         if show_progress:
-            tqdm.write(f"slack: {slack:.4f}  eta_beta: {eta_beta_current:.6f}")
+            tqdm.write(f"slack: {slack:.4f}  eta_beta: {eta_beta_current:.6f} beta: {beta:.6f}")
 
         if abs(slack) < slack_tol:
             return BetaOptimizationResult(
@@ -385,6 +415,196 @@ def optimize_beta(
 
     return BetaOptimizationResult(
         best_beta=beta,
+        result=result,
+        history_beta=history_beta,
+        history_slack=history_slack,
+    )
+
+
+def optimize_beta_bisection(
+    S: np.ndarray,
+    latency_curves: Sequence[PiecewiseLinearLatency],
+    lambda_global: float,
+    tau: float,
+    beta_init: float = 0.01,
+    max_outer_steps: int = 50,
+    slack_tol: float = 0.01,
+    beta_min: float = 0.0,
+    beta_max: float = 5.0,
+    beta_interval_tol: float | None = None,
+    show_progress: bool = False,
+    **optimize_fractions_kwargs,
+) -> BetaOptimizationResult:
+    """
+    Find β such that normalized slack (L/tau - 1) ≈ 0 via bracketing + bisection.
+
+    Assumes slack is mostly decreasing in β (larger β penalizes latency more).
+    If no sign change exists in [beta_min, beta_max], returns the endpoint with
+    smaller |slack|.
+
+    Each outer step is one full ``optimize_fractions`` call; ``max_outer_steps``
+    limits the total number of such evaluations (bracket search + bisection).
+    """
+    history_beta: list[float] = []
+    history_slack: list[float] = []
+
+    if beta_interval_tol is None:
+        beta_interval_tol = max(1e-9, (beta_max - beta_min) * 1e-7)
+
+    n_eval = 0
+
+    def eval_slack(
+        beta_val: float,
+        w_init: np.ndarray | None,
+    ) -> tuple[float, OptimizationResult]:
+        nonlocal n_eval
+        if n_eval >= max_outer_steps:
+            raise RuntimeError("max_outer_steps exhausted inside optimize_beta_bisection")
+        n_eval += 1
+        res = optimize_fractions(
+            S=S,
+            latency_curves=latency_curves,
+            lambda_global=lambda_global,
+            beta=float(beta_val),
+            tau=tau,
+            w_init=w_init,
+            **optimize_fractions_kwargs,
+        )
+        slack = float((res.best_L / tau) - 1.0)
+        history_beta.append(float(beta_val))
+        history_slack.append(slack)
+        if show_progress:
+            tqdm.write(f"[bisection] slack: {slack:.4f}  beta: {beta_val:.6f}  (eval {n_eval}/{max_outer_steps})")
+        return slack, res
+
+    beta_init = float(np.clip(beta_init, beta_min, beta_max))
+
+    s0, r0 = eval_slack(beta_init, None)
+    if abs(s0) < slack_tol:
+        return BetaOptimizationResult(
+            best_beta=beta_init,
+            result=r0,
+            history_beta=history_beta,
+            history_slack=history_slack,
+        )
+
+    # --- Bracket: find lo < hi with slack(lo) * slack(hi) <= 0 ---
+    lo = beta_init
+    slo = s0
+    rlo = r0
+    hi = beta_init
+    shi = s0
+    rhi = r0
+
+    if slo > 0:
+        # Need higher β → search toward beta_max
+        while shi > 0 and hi < beta_max - 1e-15 and n_eval < max_outer_steps:
+            lo, slo, rlo = hi, shi, rhi
+            step = max(1e-4, min((beta_max - lo) * 0.25, (beta_max - lo) * 0.5))
+            hi = min(beta_max, lo + step)
+            if hi <= lo:
+                hi = beta_max
+            shi, rhi = eval_slack(hi, rlo.best_w.copy())
+            if abs(shi) < slack_tol:
+                return BetaOptimizationResult(
+                    best_beta=hi,
+                    result=rhi,
+                    history_beta=history_beta,
+                    history_slack=history_slack,
+                )
+        # Expand with doubling if still shi > 0 and room
+        while shi > 0 and hi < beta_max - 1e-15 and n_eval < max_outer_steps:
+            lo, slo, rlo = hi, shi, rhi
+            span = max(hi - beta_init, 1e-4)
+            hi = min(beta_max, lo + span)
+            if hi <= lo:
+                hi = beta_max
+            shi, rhi = eval_slack(hi, rlo.best_w.copy())
+            if abs(shi) < slack_tol:
+                return BetaOptimizationResult(
+                    best_beta=hi,
+                    result=rhi,
+                    history_beta=history_beta,
+                    history_slack=history_slack,
+                )
+    else:
+        # slo < 0: need lower β → search toward beta_min
+        while slo < 0 and lo > beta_min + 1e-15 and n_eval < max_outer_steps:
+            hi, shi, rhi = lo, slo, rlo
+            step = max(1e-4, min((hi - beta_min) * 0.25, (hi - beta_min) * 0.5))
+            lo = max(beta_min, hi - step)
+            if lo >= hi:
+                lo = beta_min
+            slo, rlo = eval_slack(lo, rhi.best_w.copy())
+            if abs(slo) < slack_tol:
+                return BetaOptimizationResult(
+                    best_beta=lo,
+                    result=rlo,
+                    history_beta=history_beta,
+                    history_slack=history_slack,
+                )
+        while slo < 0 and lo > beta_min + 1e-15 and n_eval < max_outer_steps:
+            hi, shi, rhi = lo, slo, rlo
+            span = max(beta_init - lo, 1e-4)
+            lo = max(beta_min, hi - span)
+            if lo >= hi:
+                lo = beta_min
+            slo, rlo = eval_slack(lo, rhi.best_w.copy())
+            if abs(slo) < slack_tol:
+                return BetaOptimizationResult(
+                    best_beta=lo,
+                    result=rlo,
+                    history_beta=history_beta,
+                    history_slack=history_slack,
+                )
+
+    if slo * shi > 0:
+        if abs(slo) <= abs(shi):
+            return BetaOptimizationResult(
+                best_beta=lo,
+                result=rlo,
+                history_beta=history_beta,
+                history_slack=history_slack,
+            )
+        return BetaOptimizationResult(
+            best_beta=hi,
+            result=rhi,
+            history_beta=history_beta,
+            history_slack=history_slack,
+        )
+
+    # Ensure lo < hi for bisection
+    if lo > hi:
+        lo, hi = hi, lo
+        slo, shi = shi, slo
+        rlo, rhi = rhi, rlo
+
+    # --- Bisection on β (slack bracket) ---
+    result = rlo if abs(slo) < abs(shi) else rhi
+    while (hi - lo) > beta_interval_tol and n_eval < max_outer_steps:
+        mid = 0.5 * (lo + hi)
+        smid, rmid = eval_slack(mid, rlo.best_w.copy())
+        if abs(smid) < slack_tol:
+            return BetaOptimizationResult(
+                best_beta=mid,
+                result=rmid,
+                history_beta=history_beta,
+                history_slack=history_slack,
+            )
+        # slack decreasing in β: same sign as lo → root is right of mid
+        if smid * slo > 0:
+            lo, slo, rlo = mid, smid, rmid
+        else:
+            hi, shi, rhi = mid, smid, rmid
+        result = rmid
+
+    mid = 0.5 * (lo + hi)
+    if n_eval < max_outer_steps:
+        _, result = eval_slack(mid, rlo.best_w.copy())
+    else:
+        result = rlo if abs(slo) <= abs(shi) else rhi
+    return BetaOptimizationResult(
+        best_beta=float(mid),
         result=result,
         history_beta=history_beta,
         history_slack=history_slack,

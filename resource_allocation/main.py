@@ -12,7 +12,8 @@ Usage example:
         --beta 0.01 \\
         --tp 4 4 4 \\
         --threads 50 50 50 \\
-        --metric tpot
+        --metric tpot \\
+        --num-gpus 4
 """
 
 from __future__ import annotations
@@ -31,8 +32,11 @@ from .optimize_fractions import (
     BetaOptimizationResult,
     optimize_fractions,
     optimize_beta,
+    optimize_beta_bisection,
 )
-from .routerbench_data import load_scores as load_routerbench_scores
+from .models_config import get_model_memory_paths
+from .resource_packing import FeasibilityResult, check_feasibility
+from .routerbench_data import load_model_memory_config, load_scores as load_routerbench_scores
 
 
 def load_scores(path: str) -> np.ndarray:
@@ -150,6 +154,52 @@ def build_latency_curves_for_three_models(
     return [curves_cli_order[i] for i in reorder]
 
 
+def _thread_int_to_frac(thread_percentage: int) -> float:
+    return float(thread_percentage) / 100.0
+
+
+def _get_memory_frac(min_gpu_util_per_tp: dict[str, float], tp: int, memory_scale: float) -> float:
+    key = str(int(tp))
+    if key not in min_gpu_util_per_tp:
+        raise KeyError(f"No memory util entry for tp={tp} (key='{key}').")
+    return float(min_gpu_util_per_tp[key]) * float(memory_scale)
+
+
+def packing_feasibility_for_cli_setup(
+    tps_cli: list[int],
+    threads_cli: list[int],
+    *,
+    num_gpus: int,
+    root: Path | str = ".",
+    memory_scale: float = 1.0,
+) -> FeasibilityResult:
+    """
+    Map CLI order (Mistral, Vicuna, Yi) to canonical score order (Mistral, Yi, Vicuna)
+    and run the same 2D packing check as brute_force_setup (min memory at each TP).
+    """
+    if len(tps_cli) != 3 or len(threads_cli) != 3:
+        raise ValueError("tps and threads must each have length 3")
+
+    reorder = [0, 2, 1]
+    tp_canon = [tps_cli[i] for i in reorder]
+    th_canon = [threads_cli[i] for i in reorder]
+
+    root = Path(root)
+    model_min_gpu_utils = [load_model_memory_config(p) for p in get_model_memory_paths(root)]
+    thread_fracs = [_thread_int_to_frac(th) for th in th_canon]
+    memory_levels = [
+        _get_memory_frac(model_min_gpu_utils[k], int(tp), memory_scale)
+        for k, tp in enumerate(tp_canon)
+    ]
+
+    return check_feasibility(
+        tp_levels=np.asarray(tp_canon, dtype=int),
+        thread_percentages=thread_fracs,
+        memory_percentages=np.asarray(memory_levels, dtype=float),
+        num_gpus=num_gpus,
+    )
+
+
 def run_optimize(
     lambda_global: float,
     beta: float,
@@ -235,6 +285,9 @@ def run_optimize_beta(
     eta_beta_min: float = 1e-4,
     eta_beta_decay: float = 0.98,
     slack_tol: float = 0.01,
+    beta_method: str = "subgradient",
+    beta_min: float = 0.0,
+    beta_max: float = 5.0,
 ) -> BetaOptimizationResult:
     """Find β such that normalized slack (L/tau - 1) ≈ 0."""
     S = load_scores("datasets/routerbench_0shot_scores.pkl")
@@ -247,17 +300,7 @@ def run_optimize_beta(
         print(f"Subsampled scores: using {m}/{N} prompts (fraction={sample_frac:.3f})")
     latency_curves = build_latency_curves_for_three_models(tps=tps, threads=threads, metric=metric)
 
-    return optimize_beta(
-        S=S,
-        latency_curves=latency_curves,
-        lambda_global=lambda_global,
-        tau=tau,
-        beta_init=beta_init,
-        max_outer_steps=max_outer_steps,
-        eta_beta=eta_beta,
-        eta_beta_min=eta_beta_min,
-        eta_beta_decay=eta_beta_decay,
-        slack_tol=slack_tol,
+    inner_kw = dict(
         n_steps=n_steps,
         eta=eta,
         seed=seed,
@@ -270,6 +313,37 @@ def run_optimize_beta(
         dual_tol=dual_tol,
         dual_tie_noise=dual_tie_noise,
     )
+
+    if beta_method == "subgradient":
+        return optimize_beta(
+            S=S,
+            latency_curves=latency_curves,
+            lambda_global=lambda_global,
+            tau=tau,
+            beta_init=beta_init,
+            max_outer_steps=max_outer_steps,
+            eta_beta=eta_beta,
+            eta_beta_min=eta_beta_min,
+            eta_beta_decay=eta_beta_decay,
+            slack_tol=slack_tol,
+            beta_min=beta_min,
+            beta_max=beta_max,
+            **inner_kw,
+        )
+    if beta_method == "bisection":
+        return optimize_beta_bisection(
+            S=S,
+            latency_curves=latency_curves,
+            lambda_global=lambda_global,
+            tau=tau,
+            beta_init=beta_init,
+            max_outer_steps=max_outer_steps,
+            slack_tol=slack_tol,
+            beta_min=beta_min,
+            beta_max=beta_max,
+            **inner_kw,
+        )
+    raise ValueError(f"Unknown beta_method: {beta_method!r} (use 'subgradient' or 'bisection')")
 
 
 def main() -> None:
@@ -377,6 +451,25 @@ def main() -> None:
         help="Search for optimal β such that normalized slack ≈ 0. --beta is used as initial β.",
     )
     parser.add_argument(
+        "--optimize-beta-method",
+        type=str,
+        default="subgradient",
+        choices=("subgradient", "bisection"),
+        help="Outer β search: subgradient (default) or bracket+bisection on slack (bisection).",
+    )
+    parser.add_argument(
+        "--beta-min",
+        type=float,
+        default=0.0,
+        help="Lower clip for β in both outer search methods (default: 0).",
+    )
+    parser.add_argument(
+        "--beta-max",
+        type=float,
+        default=5.0,
+        help="Upper clip for β in both outer search methods (default: 5).",
+    )
+    parser.add_argument(
         "--max-outer-steps",
         type=int,
         default=50,
@@ -430,7 +523,41 @@ def main() -> None:
         default=1e-9,
         help="Dual-prices tie-breaking noise (default: 1e-9).",
     )
+    parser.add_argument(
+        "--num-gpus",
+        type=int,
+        default=None,
+        metavar="G",
+        help="If set, report 2D packing feasibility (resource_packing) for this TP/thread setup.",
+    )
+    parser.add_argument(
+        "--root",
+        type=str,
+        default=".",
+        help="Project root for memory JSON files (used with --num-gpus).",
+    )
+    parser.add_argument(
+        "--memory-scale",
+        type=float,
+        default=1.0,
+        metavar="S",
+        help="Scale min GPU memory fractions when checking packing (default: 1.0).",
+    )
     args = parser.parse_args()
+
+    pack_res: FeasibilityResult | None = None
+    if args.num_gpus is not None:
+        pack_res = packing_feasibility_for_cli_setup(
+            list(args.tp),
+            list(args.threads),
+            num_gpus=args.num_gpus,
+            root=args.root,
+            memory_scale=args.memory_scale,
+        )
+        print("\n=== GPU packing feasibility (canonical order: Mistral, Yi, Vicuna) ===")
+        print("Packing feasible:", pack_res.feasible)
+        if pack_res.reason:
+            print("Reason:", pack_res.reason)
 
     if args.optimize_beta:
         beta_result = run_optimize_beta(
@@ -457,9 +584,13 @@ def main() -> None:
             eta_beta_min=args.eta_beta_min,
             eta_beta_decay=args.eta_beta_decay,
             slack_tol=args.slack_tol,
+            beta_method=args.optimize_beta_method,
+            beta_min=args.beta_min,
+            beta_max=args.beta_max,
         )
         result = beta_result.result
         print("\n=== β search finished ===")
+        print("β search method:", args.optimize_beta_method)
         print("Optimal β:", beta_result.best_beta)
         print("Outer iterations:", len(beta_result.history_beta))
         print("Slack history:", [f"{s:.4f}" for s in beta_result.history_slack])
@@ -487,6 +618,8 @@ def main() -> None:
         )
 
     print("\n=== Optimization finished ===")
+    if pack_res is not None:
+        print("GPU packing feasible:", pack_res.feasible)
     print("Returned w (final/EMA):", result.w)
     print("Best objective S - β(L/τ - 1):", result.best_obj)
     print("  at w:", result.best_w)

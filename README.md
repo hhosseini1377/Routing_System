@@ -11,6 +11,11 @@ The system consists of:
 
 Both model servers use vLLM with tensor parallelism across 2 GPUs, and NVIDIA MPS for GPU sharing.
 
+## Method Documentation
+
+- Full optimization and deployment-search method: `docs/METHOD.md`
+- Project-level problem description: `docs/PROJECT_DESCRIPTION.md`
+
 ## Quick Start
 
 1. Configure models and ports in `scripts/config.sh`
